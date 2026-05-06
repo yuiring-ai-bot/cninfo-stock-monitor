@@ -44,10 +44,8 @@ def watch_stock(stock_code, stock_name):
         with open(state_file, 'r') as f:
             state = json.load(f)
         last_time = state.get('last_announcement_time', 0)
-        print(f"[{stock_name}] 上次检查: {datetime.datetime.fromtimestamp(last_time/1000).strftime('%Y-%m-%d %H:%M') if last_time else '首次'}")
     else:
         last_time = 0
-        print(f"[{stock_name}] 首次检查，无历史记录")
 
     # 抓取年报 + 业绩预告
     categories = ['category_ndbg_szsh', 'category_yjygjxz']
@@ -83,17 +81,14 @@ def watch_stock(stock_code, stock_name):
 
     # 输出结果
     if new_anns:
-        print(f"\n{'='*50}")
         print(f"🆕 {stock_name} ({stock_code}) 发现 {len(new_anns)} 条新公告:")
         for a in new_anns:
             ts = a['announcementTime'] // 1000
-            dt = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
+            dt = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
             print(f"  [{dt}] {a['announcementTitle']}")
-            print(f"    PDF: http://www.cninfo.com.cn/{a['adjunctUrl']}")
-        print(f"{'='*50}")
         return True, new_anns
     else:
-        print(f"✅ {stock_name} 今日无新年报/业绩预告")
+        # 无新公告，静默退出，不输出任何内容
         return False, []
 
 def main():

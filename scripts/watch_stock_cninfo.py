@@ -73,11 +73,8 @@ def watch_stock(stock_code, stock_name):
         with open(state_file, 'r') as f:
             state = json.load(f)
         last_time = state.get('last_announcement_time', 0)
-        last_dt = datetime.datetime.fromtimestamp(last_time/1000).strftime('%Y-%m-%d %H:%M') if last_time else '首次'
-        print(f"[{stock_name}] 上次检查: {last_dt}")
     else:
         last_time = 0
-        print(f"[{stock_name}] 首次检查，无历史记录")
     
     # 获取年报 + 业绩预告
     anns_annual, total_annual = fetch_cninfo(stock_code, category='category_ndbg_szsh')
@@ -111,18 +108,14 @@ def watch_stock(stock_code, stock_name):
     with open(state_file, 'w') as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     
-    print(f"  年报: {total_annual}条, 业绩预告: {total_forecast}条, 共{len(unique)}条")
-    
     if new_anns:
-        print(f"\n{'='*60}")
         print(f"🆕 {stock_name} ({stock_code}) 发现 {len(new_anns)} 条新公告:")
         for a in new_anns[:10]:
             dt = datetime.datetime.fromtimestamp(a['announcementTime']/1000).strftime('%Y-%m-%d')
             print(f"  [{dt}] {a['announcementTitle']}")
-        print(f"{'='*60}")
         return True, new_anns
     else:
-        print(f"  ✅ 今日无新公告")
+        # 无新公告，静默退出，不输出任何内容
         return False, []
 
 def main():
