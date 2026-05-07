@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 A股年报财报监控 - 巨潮网 API 版本
-用法: python watch_stock_cninfo.py [stock_code] [stock_name]
+用法: python3 scripts/watch_stock_cninfo.py [stock_code] [stock_name]
 """
 import urllib.request
 import urllib.parse
@@ -68,7 +68,7 @@ def watch_stock(stock_code, stock_name):
     """监控指定股票的新年报/业绩预告"""
     state_file = STATE_FILE(stock_code)
     
-    # 读取上次状态
+    # 读取上次状态（静默）
     if os.path.exists(state_file):
         with open(state_file, 'r') as f:
             state = json.load(f)
@@ -108,6 +108,7 @@ def watch_stock(stock_code, stock_name):
     with open(state_file, 'w') as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     
+    # 只在新公告时输出
     if new_anns:
         print(f"🆕 {stock_name} ({stock_code}) 发现 {len(new_anns)} 条新公告:")
         for a in new_anns[:10]:
