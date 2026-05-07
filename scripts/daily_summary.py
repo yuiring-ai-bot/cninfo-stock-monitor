@@ -16,6 +16,9 @@ API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 # 监控列表
 STOCKS = [
     {"code": "600089", "name": "特变电工"},
+    {"code": "600927", "name": "永安期货"},
+    {"code": "600824", "name": "益民集团"},
+    {"code": "601186", "name": "中国铁建"},
 ]
 
 def get_exchange(stock_code):
