@@ -2,7 +2,8 @@
 """
 A股历史财报抓取 - 巨潮网 API
 用法: python3 fetch_history.py [stock_code] [stock_name]
-抓取近5年: 年报、半年报、季报
+抓取全部历史: 年报
+抓取近5年: 半年报、季报、业绩预告
 抓取近2年: 所有类型公告
 """
 import urllib.request
@@ -15,14 +16,7 @@ import sys
 HISTORY_DIR = "/tmp/cninfo_watch/history"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 
-# 分类列表
-CATEGORIES = {
-    '年报': 'category_ndbg_szsh',
-    '半年报': 'category_bndbg_szsh',
-    '季报': 'category_jdbg_szsh',
-    '业绩预告': 'category_yjygjxz',
-}
-
+# 所有分类列表（用于近2年全量公告抓取）
 ALL_CATEGORIES = [
     'category_ndbg_szsh',     # 年报
     'category_bndbg_szsh',    # 半年报
@@ -88,7 +82,7 @@ def fetch_announcements(stock_code, category='', pageSize=100, pageNum=1):
         total = result.get('totalAnnouncement', 0)
         return anns, total
 
-def fetch_all_pages(stock_code, category='', max_pages=20):
+def fetch_all_pages(stock_code, category='', max_pages=50):
     """分页抓取所有公告"""
     all_anns = []
     page = 1
@@ -114,6 +108,16 @@ def save_report(data, filepath):
         json.dump(data, f, ensure_ascii=False, indent=2)
     print(f"  ✓ 保存: {filepath}")
 
+def deduplicate(anns):
+    """去重"""
+    seen = set()
+    unique = []
+    for a in anns:
+        if a['announcementId'] not in seen:
+            seen.add(a['announcementId'])
+            unique.append(a)
+    return unique
+
 def fetch_history(stock_code, stock_name):
     """抓取完整历史数据"""
     print(f"\n{'='*60}")
@@ -122,47 +126,91 @@ def fetch_history(stock_code, stock_name):
     
     stock_dir = os.path.join(HISTORY_DIR, stock_code)
     
-    # 1. 近5年定期报告（年报、半年报、季报）
-    print(f"\n📄 近5年定期报告:")
-    report_types = [
-        ('年报', 'category_ndbg_szsh', 5),
-        ('半年报', 'category_bndbg_szsh', 5),
-        ('季报', 'category_jdbg_szsh', 5),
-        ('业绩预告', 'category_yjygjxz', 5),
-    ]
+    # ========== 1. 年报：全部历史（不设时间限制）==========
+    print(f"\n📄 年报（全部历史）:")
+    annual_reports = fetch_all_pages(stock_code, category='category_ndbg_szsh', max_pages=50)
+    annual_reports = deduplicate(annual_reports)
+    annual_reports.sort(key=lambda x: x['announcementTime'], reverse=True)
+    print(f"  共获取 {len(annual_reports)} 条年报")
     
-    periodic_reports = []
-    for name, cat, years in report_types:
-        anns = fetch_all_pages(stock_code, category=cat)
-        filtered = [a for a in anns if is_within_years(a['announcementTime'], years)]
-        periodic_reports.extend(filtered)
-        print(f"  {name}: 获取 {len(anns)} 条, 过滤后 {len(filtered)} 条")
-    
-    if periodic_reports:
-        # 去重
-        seen = set()
-        unique = []
-        for a in periodic_reports:
-            if a['announcementId'] not in seen:
-                seen.add(a['announcementId'])
-                unique.append(a)
-        unique.sort(key=lambda x: x['announcementTime'], reverse=True)
+    if annual_reports:
+        earliest = datetime.datetime.fromtimestamp(annual_reports[-1]['announcementTime']/1000).strftime('%Y-%m-%d')
+        latest = datetime.datetime.fromtimestamp(annual_reports[0]['announcementTime']/1000).strftime('%Y-%m-%d')
+        print(f"  时间范围: {earliest} ~ {latest}")
         
         data = {
             'stock_code': stock_code,
             'stock_name': stock_name,
-            'type': 'periodic_reports_5years',
+            'type': 'annual_reports_all_history',
             'fetch_time': datetime.datetime.now().isoformat(),
-            'count': len(unique),
-            'announcements': unique
+            'count': len(annual_reports),
+            'earliest_date': earliest,
+            'latest_date': latest,
+            'announcements': annual_reports
         }
-        save_report(data, os.path.join(stock_dir, 'periodic_reports_5years.json'))
+        save_report(data, os.path.join(stock_dir, 'annual_reports_all_history.json'))
     
-    # 2. 近2年所有公告
+    # ========== 2. 近5年半年报 ==========
+    print(f"\n📄 近5年半年报:")
+    half_reports = fetch_all_pages(stock_code, category='category_bndbg_szsh', max_pages=30)
+    half_reports = [a for a in half_reports if is_within_years(a['announcementTime'], 5)]
+    half_reports = deduplicate(half_reports)
+    half_reports.sort(key=lambda x: x['announcementTime'], reverse=True)
+    print(f"  近5年半年报: {len(half_reports)} 条")
+    
+    if half_reports:
+        data = {
+            'stock_code': stock_code,
+            'stock_name': stock_name,
+            'type': 'half_reports_5years',
+            'fetch_time': datetime.datetime.now().isoformat(),
+            'count': len(half_reports),
+            'announcements': half_reports
+        }
+        save_report(data, os.path.join(stock_dir, 'half_reports_5years.json'))
+    
+    # ========== 3. 近5年季报 ==========
+    print(f"\n📄 近5年季报:")
+    quarter_reports = fetch_all_pages(stock_code, category='category_jdbg_szsh', max_pages=30)
+    quarter_reports = [a for a in quarter_reports if is_within_years(a['announcementTime'], 5)]
+    quarter_reports = deduplicate(quarter_reports)
+    quarter_reports.sort(key=lambda x: x['announcementTime'], reverse=True)
+    print(f"  近5年季报: {len(quarter_reports)} 条")
+    
+    if quarter_reports:
+        data = {
+            'stock_code': stock_code,
+            'stock_name': stock_name,
+            'type': 'quarter_reports_5years',
+            'fetch_time': datetime.datetime.now().isoformat(),
+            'count': len(quarter_reports),
+            'announcements': quarter_reports
+        }
+        save_report(data, os.path.join(stock_dir, 'quarter_reports_5years.json'))
+    
+    # ========== 4. 近5年业绩预告 ==========
+    print(f"\n📄 近5年业绩预告:")
+    forecast_reports = fetch_all_pages(stock_code, category='category_yjygjxz', max_pages=30)
+    forecast_reports = [a for a in forecast_reports if is_within_years(a['announcementTime'], 5)]
+    forecast_reports = deduplicate(forecast_reports)
+    forecast_reports.sort(key=lambda x: x['announcementTime'], reverse=True)
+    print(f"  近5年业绩预告: {len(forecast_reports)} 条")
+    
+    if forecast_reports:
+        data = {
+            'stock_code': stock_code,
+            'stock_name': stock_name,
+            'type': 'forecast_reports_5years',
+            'fetch_time': datetime.datetime.now().isoformat(),
+            'count': len(forecast_reports),
+            'announcements': forecast_reports
+        }
+        save_report(data, os.path.join(stock_dir, 'forecast_reports_5years.json'))
+    
+    # ========== 5. 近2年所有公告 ==========
     print(f"\n📋 近2年所有公告:")
     all_anns = []
     
-    # 批量抓取（分多次请求）
     for i in range(0, len(ALL_CATEGORIES), 3):
         cats = ALL_CATEGORIES[i:i+3]
         for cat in cats:
@@ -174,14 +222,8 @@ def fetch_history(stock_code, stock_name):
                 print(f"  {cat}: 错误 - {e}")
     
     # 去重和过滤2年内
-    seen = set()
-    unique = []
-    for a in all_anns:
-        if a['announcementId'] not in seen:
-            seen.add(a['announcementId'])
-            unique.append(a)
-    
-    filtered = [a for a in unique if is_within_years(a['announcementTime'], 2)]
+    all_anns = deduplicate(all_anns)
+    filtered = [a for a in all_anns if is_within_years(a['announcementTime'], 2)]
     filtered.sort(key=lambda x: x['announcementTime'], reverse=True)
     
     data = {
@@ -194,19 +236,27 @@ def fetch_history(stock_code, stock_name):
     }
     save_report(data, os.path.join(stock_dir, 'all_announcements_2years.json'))
     
-    # 3. 生成索引摘要
+    # ========== 6. 生成索引摘要 ==========
     print(f"\n📑 生成索引摘要...")
+    
     index = {
         'stock_code': stock_code,
         'stock_name': stock_name,
         'fetch_time': datetime.datetime.now().isoformat(),
         'files': {
-            'periodic_reports_5years': os.path.join(stock_dir, 'periodic_reports_5years.json'),
-            'all_announcements_2years': os.path.join(stock_dir, 'all_announcements_2years.json'),
+            'annual_reports_all_history': 'annual_reports_all_history.json',
+            'half_reports_5years': 'half_reports_5years.json',
+            'quarter_reports_5years': 'quarter_reports_5years.json',
+            'forecast_reports_5years': 'forecast_reports_5years.json',
+            'all_announcements_2years': 'all_announcements_2years.json',
         },
         'summary': {
-            'periodic_reports_count': len([a for a in filtered if 'category_ndbg_szsh' in str(a.get('announcementId', ''))]),
-            'all_announcements_count': len(filtered),
+            'annual_reports_all_time': len(annual_reports),
+            'annual_date_range': f"{earliest} ~ {latest}" if annual_reports else "N/A",
+            'half_reports_5years': len(half_reports),
+            'quarter_reports_5years': len(quarter_reports),
+            'forecast_reports_5years': len(forecast_reports),
+            'all_announcements_2years': len(filtered),
         }
     }
     save_report(index, os.path.join(stock_dir, 'index.json'))
