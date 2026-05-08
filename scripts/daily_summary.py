@@ -14,14 +14,29 @@ from cninfo_resolver import resolve_stock_info
 
 CACHE_DIR = "/tmp/cninfo_watch"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_STOCK_CONFIG = os.path.join(PROJECT_ROOT, "config", "stocks.json")
 
-# 监控列表
-STOCKS = [
-    {"code": "600089", "name": "特变电工"},
-    {"code": "600927", "name": "永安期货"},
-    {"code": "600824", "name": "益民集团"},
-    {"code": "601186", "name": "中国铁建"},
-]
+
+def load_stocks(config_path=None):
+    path = config_path or os.environ.get("CNINFO_STOCK_CONFIG") or DEFAULT_STOCK_CONFIG
+    with open(path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    stocks = config.get("stocks")
+    if not isinstance(stocks, list) or not stocks:
+        raise ValueError(f"{path} must contain a non-empty 'stocks' list")
+
+    normalized = []
+    for index, stock in enumerate(stocks, start=1):
+        code = str(stock.get("code", "")).strip()
+        if not code:
+            raise ValueError(f"{path} stocks[{index}] is missing code")
+        name = str(stock.get("name", "")).strip()
+        if not name:
+            name = resolve_stock_info(code).get("name") or code
+        normalized.append({"code": code, "name": name})
+    return normalized
 
 def fetch_cninfo(stock_code, category='', pageSize=20, pageNum=1):
     stock_info = resolve_stock_info(stock_code)
@@ -87,11 +102,12 @@ def check_stock(stock):
     }
 
 def main():
+    config_path = sys.argv[1] if len(sys.argv) > 1 else None
     today = datetime.datetime.now().strftime('%Y-%m-%d')
     yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
     results = []
-    for stock in STOCKS:
+    for stock in load_stocks(config_path):
         result = check_stock(stock)
         results.append(result)
 

@@ -24,6 +24,8 @@
 │   ├── onboard_stock.py          # 新股票录入脚本
 │   ├── watch_stock.py            # 通用监控脚本
 │   └── watch_stock_em.py         # 东方财富监控脚本
+├── config/
+│   └── stocks.json               # 批量监控股票配置
 ├── 600089_last_check.json        # 示例股票最近检查状态
 ├── 600089_last_check_em.json     # 示例股票东方财富检查状态
 └── README.md
@@ -94,6 +96,32 @@ python scripts/onboard_stock.py 600089 特变电工
 ```
 
 如需监控多只股票，可以为每只股票配置一条定时任务，或在调度脚本中循环调用监控脚本。
+
+### 4. 配置每日摘要监控列表
+
+每日摘要脚本从 `config/stocks.json` 读取监控股票，不在脚本中硬编码股票列表：
+
+```json
+{
+  "stocks": [
+    { "code": "600089", "name": "特变电工" },
+    { "code": "600927", "name": "永安期货" }
+  ]
+}
+```
+
+运行默认配置：
+
+```bash
+python scripts/daily_summary.py
+```
+
+也可以通过命令行参数或环境变量指定其他配置文件：
+
+```bash
+python scripts/daily_summary.py /path/to/stocks.json
+CNINFO_STOCK_CONFIG=/path/to/stocks.json python scripts/daily_summary.py
+```
 
 ## API 说明
 
