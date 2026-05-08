@@ -28,6 +28,21 @@ def get_exchange(stock_code):
         return 'szse'
 
 def build_org_id(stock_code):
+    """构建 orgId:
+    - 上交所: gssh0 + 6位代码 (例: gssh0600089)
+    - 深交所: gssz0 + 6位代码 (例: gssz0000001)
+    
+    ⚠️ 部分股票不在标准格式中（如永安期货gfbj0833840、中国铁建9900004347）
+    优先从已知映射表查找，未知则通过 cninfo 搜索 API 反查。
+    """
+    # 已知非标准 orgId 映射（已通过 cninfo 搜索 API 验证）
+    KNOWN_NONSTANDARD = {
+        "600927": "gfbj0833840",   # 永安期货
+        "601186": "9900004347",    # 中国铁建
+    }
+    if stock_code in KNOWN_NONSTANDARD:
+        return KNOWN_NONSTANDARD[stock_code]
+    
     exchange = get_exchange(stock_code)
     if exchange == 'sse':
         return f"gssh0{stock_code}"
