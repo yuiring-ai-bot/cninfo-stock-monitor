@@ -21,6 +21,7 @@ STOCKS = [
     {"code": "600927", "name": "永安期货"},
     {"code": "600824", "name": "益民集团"},
     {"code": "601186", "name": "中国铁建"},
+    {"code": "600790", "name": "轻纺城"},
 ]
 
 def fetch_cninfo(stock_code, category='', pageSize=20, pageNum=1):
