@@ -11,6 +11,8 @@ import sys
 
 CACHE_DIR = "/tmp/cninfo_watch"
 BASE_URL = "http://np-anotice-stock.eastmoney.com/api/security/ann"
+DEFAULT_STOCK_CODE = "600089"
+DEFAULT_STOCK_NAME = "特变电工"  # 示例股票，可通过命令行参数替换
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 STATE_FILE = lambda code: os.path.join(CACHE_DIR, f"{code}_last_check_em.json")
@@ -111,8 +113,8 @@ def get_all_history(stock_code, max_pages=30):
     return all_anns
 
 def main():
-    stock_code = sys.argv[1] if len(sys.argv) > 1 else "600089"
-    stock_name = sys.argv[2] if len(sys.argv) > 2 else "特变电工"
+    stock_code = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STOCK_CODE
+    stock_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_STOCK_NAME
 
     if len(sys.argv) > 3 and sys.argv[3] == '--onboard':
         # 录入模式：获取完整历史

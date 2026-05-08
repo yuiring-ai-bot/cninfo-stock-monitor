@@ -12,6 +12,8 @@ import sys
 
 CACHE_DIR = "/tmp/cninfo_watch"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
+DEFAULT_STOCK_CODE = "600089"
+DEFAULT_STOCK_NAME = "特变电工"  # 示例股票，可通过命令行参数替换
 STATE_FILE = lambda code: os.path.join(CACHE_DIR, f"{code}_last_check.json")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -126,8 +128,8 @@ def watch_stock(stock_code, stock_name):
         return False, []
 
 def main():
-    stock_code = sys.argv[1] if len(sys.argv) > 1 else "600089"
-    stock_name = sys.argv[2] if len(sys.argv) > 2 else "特变电工"
+    stock_code = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STOCK_CODE
+    stock_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_STOCK_NAME
     has_new, _ = watch_stock(stock_code, stock_name)
     sys.exit(0)
 

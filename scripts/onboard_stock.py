@@ -11,8 +11,10 @@ import os
 import sys
 
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
+DEFAULT_STOCK_CODE = "600089"
+DEFAULT_STOCK_NAME = "特变电工"  # 示例股票，可通过命令行参数替换
 OUTPUT_DIR = lambda code: f"/tmp/cninfo_watch/{code}_history"
-os.makedirs(OUTPUT_DIR(sys.argv[1] if len(sys.argv) > 1 else "600089"), exist_ok=True)
+os.makedirs(OUTPUT_DIR(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STOCK_CODE), exist_ok=True)
 
 CATEGORIES = {
     'annual': 'category_ndbg_szsh',      # 年度报告
@@ -146,8 +148,8 @@ def onboard_stock(stock_code, stock_name):
     return results
 
 def main():
-    stock_code = sys.argv[1] if len(sys.argv) > 1 else "600089"
-    stock_name = sys.argv[2] if len(sys.argv) > 2 else "特变电工"
+    stock_code = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STOCK_CODE
+    stock_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_STOCK_NAME
     onboard_stock(stock_code, stock_name)
 
 if __name__ == "__main__":
