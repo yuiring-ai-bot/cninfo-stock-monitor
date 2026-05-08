@@ -10,6 +10,8 @@ import sys
 import urllib.parse
 import urllib.request
 
+from cninfo_resolver import build_org_id, get_exchange, resolve_stock_info
+
 CACHE_DIR = "/tmp/cninfo_watch"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 DEFAULT_STOCK_CODE = "600089"
@@ -18,43 +20,18 @@ STATE_FILE = lambda code: os.path.join(CACHE_DIR, f"{code}_last_check.json")
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-KNOWN_NONSTANDARD_ORG_IDS = {
-    "600927": "gfbj0833840",  # 永安期货
-    "601186": "9900004347",   # 中国铁建
-}
-
-
-def get_exchange(stock_code):
-    """Infer exchange from the stock code prefix."""
-    if stock_code.startswith(("6", "8")):
-        return "sse"
-    return "szse"
-
-
-def build_org_id(stock_code):
-    """Build cninfo orgId, with overrides for known non-standard stock mappings."""
-    if stock_code in KNOWN_NONSTANDARD_ORG_IDS:
-        return KNOWN_NONSTANDARD_ORG_IDS[stock_code]
-
-    exchange = get_exchange(stock_code)
-    if exchange == "sse":
-        return f"gssh0{stock_code}"
-    return f"gssz0{stock_code}"
-
-
 def fetch_cninfo(stock_code, category="", page_size=50, page_num=1):
     """Fetch cninfo announcements for one stock."""
-    exchange = get_exchange(stock_code)
-    org_id = build_org_id(stock_code)
-    stock_str = f"{stock_code},{org_id}"
+    stock_info = resolve_stock_info(stock_code)
+    stock_str = f"{stock_info['code']},{stock_info['org_id']}"
 
     params = {
         "stock": stock_str,
         "tabName": "fulltext",
         "pageSize": page_size,
         "pageNum": page_num,
-        "column": exchange,
-        "plate": "sh" if exchange == "sse" else "sz",
+        "column": stock_info["column"],
+        "plate": stock_info["plate_param"],
     }
     if category:
         params["category"] = category

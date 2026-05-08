@@ -13,6 +13,8 @@ import datetime
 import os
 import sys
 
+from cninfo_resolver import resolve_stock_info
+
 HISTORY_DIR = "/tmp/cninfo_watch/history"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 
@@ -38,47 +40,18 @@ ALL_CATEGORIES = [
     'category_tzzgx',         # 投资者关系
 ]
 
-def get_exchange(stock_code):
-    if stock_code.startswith(('6', '8')):
-        return 'sse'
-    else:
-        return 'szse'
-
-def build_org_id(stock_code):
-    """构建 orgId:
-    - 上交所: gssh0 + 6位代码 (例: gssh0600089)
-    - 深交所: gssz0 + 6位代码 (例: gssz0000001)
-
-    ⚠️ 部分股票不在标准格式中（如永安期货gfbj0833840、中国铁建9900004347）
-    优先从已知映射表查找，未知则通过 cninfo 搜索 API 反查。
-    """
-    # 已知非标准 orgId 映射（已通过 cninfo 搜索 API 验证）
-    KNOWN_NONSTANDARD = {
-        "600927": "gfbj0833840",   # 永安期货
-        "601186": "9900004347",    # 中国铁建
-    }
-    if stock_code in KNOWN_NONSTANDARD:
-        return KNOWN_NONSTANDARD[stock_code]
-
-    exchange = get_exchange(stock_code)
-    if exchange == 'sse':
-        return f"gssh0{stock_code}"
-    else:
-        return f"gssz0{stock_code}"
-
 def fetch_announcements(stock_code, category='', pageSize=100, pageNum=1):
     """获取公告列表"""
-    exchange = get_exchange(stock_code)
-    org_id = build_org_id(stock_code)
-    stock_str = f"{stock_code},{org_id}"
+    stock_info = resolve_stock_info(stock_code)
+    stock_str = f"{stock_info['code']},{stock_info['org_id']}"
 
     params = {
         'stock': stock_str,
         'tabName': 'fulltext',
         'pageSize': pageSize,
         'pageNum': pageNum,
-        'column': exchange,
-        'plate': 'sh' if exchange == 'sse' else 'sz'
+        'column': stock_info['column'],
+        'plate': stock_info['plate_param']
     }
     if category:
         params['category'] = category
