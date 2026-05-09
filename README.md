@@ -23,9 +23,14 @@
 │   ├── watch_stock_cninfo.py     # 巨潮网监控脚本
 │   ├── onboard_stock.py          # 新股票录入脚本
 │   ├── watch_stock.py            # 通用监控脚本
-│   └── watch_stock_em.py         # 东方财富监控脚本
+│   ├── watch_stock_em.py         # 东方财富监控脚本
+│   ├── fetch_history.py          # 历史公告抓取脚本
+│   ├── cninfo_pdfs.py            # PDF 下载器
+│   └── fetch_pdfs.py             # PDF 下载命令行包装
 ├── config/
 │   └── stocks.json               # 批量监控股票配置
+├── docs/
+│   └── ARCHITECTURE.md           # 架构文档
 ├── 600089_last_check.json        # 示例股票最近检查状态
 ├── 600089_last_check_em.json     # 示例股票东方财富检查状态
 └── README.md
@@ -46,6 +51,21 @@
 - **东方财富 API**: 补充数据源
 - **JSON**: 本地数据存储格式
 - **GitHub Actions / cron**: 可用于定时监控调度
+
+## 配置
+
+### 数据目录
+
+历史公告和 PDF 等运行数据默认写入：
+
+- Linux/macOS: `/tmp/cninfo_watch`
+- Windows: 系统临时目录下的 `cninfo_watch`
+
+可以用环境变量覆盖：
+
+```bash
+CNINFO_DATA_DIR=/path/to/cninfo_watch python scripts/fetch_history.py 600089 特变电工
+```
 
 ## 监控指标
 

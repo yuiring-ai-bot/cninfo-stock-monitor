@@ -11,32 +11,10 @@ import urllib.request
 import urllib.parse
 
 from cninfo_resolver import resolve_stock_info
+from stock_config import load_stocks
 
 CACHE_DIR = "/tmp/cninfo_watch"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_STOCK_CONFIG = os.path.join(PROJECT_ROOT, "config", "stocks.json")
-
-
-def load_stocks(config_path=None):
-    path = config_path or os.environ.get("CNINFO_STOCK_CONFIG") or DEFAULT_STOCK_CONFIG
-    with open(path, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
-    stocks = config.get("stocks")
-    if not isinstance(stocks, list) or not stocks:
-        raise ValueError(f"{path} must contain a non-empty 'stocks' list")
-
-    normalized = []
-    for index, stock in enumerate(stocks, start=1):
-        code = str(stock.get("code", "")).strip()
-        if not code:
-            raise ValueError(f"{path} stocks[{index}] is missing code")
-        name = str(stock.get("name", "")).strip()
-        if not name:
-            name = resolve_stock_info(code).get("name") or code
-        normalized.append({"code": code, "name": name})
-    return normalized
 
 def fetch_cninfo(stock_code, category='', pageSize=20, pageNum=1):
     stock_info = resolve_stock_info(stock_code)

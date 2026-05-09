@@ -13,9 +13,9 @@ import datetime
 import os
 import sys
 
+from cninfo_paths import HISTORY_DIR
 from cninfo_resolver import resolve_stock_info
 
-HISTORY_DIR = "/tmp/cninfo_watch/history"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 
 # 所有分类列表（用于近2年全量公告抓取）
