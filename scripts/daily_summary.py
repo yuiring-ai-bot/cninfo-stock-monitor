@@ -11,18 +11,11 @@ import urllib.request
 import urllib.parse
 
 from cninfo_resolver import resolve_stock_info
+from stock_config import load_stocks
 
 CACHE_DIR = "/tmp/cninfo_watch"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 
-# 监控列表
-STOCKS = [
-    {"code": "600089", "name": "特变电工"},
-    {"code": "600927", "name": "永安期货"},
-    {"code": "600824", "name": "益民集团"},
-    {"code": "601186", "name": "中国铁建"},
-    {"code": "600790", "name": "轻纺城"},
-]
 
 def fetch_cninfo(stock_code, category='', pageSize=20, pageNum=1):
     stock_info = resolve_stock_info(stock_code)
@@ -88,11 +81,12 @@ def check_stock(stock):
     }
 
 def main():
+    config_path = sys.argv[1] if len(sys.argv) > 1 else None
     today = datetime.datetime.now().strftime('%Y-%m-%d')
     yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
     results = []
-    for stock in STOCKS:
+    for stock in load_stocks(config_path):
         result = check_stock(stock)
         results.append(result)
 

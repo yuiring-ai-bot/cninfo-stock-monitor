@@ -17,15 +17,24 @@ import urllib.request
 import urllib.parse
 import urllib.error
 from datetime import datetime
-from typing import Optional
+
+from cninfo_resolver import resolve_stock_info
+from cninfo_paths import FILINGS_DIR, HISTORY_DIR, PDF_DIR
+from stock_config import load_stocks
 
 # === 配置 ===
-OUT_DIR = "/tmp/cninfo_watch/pdfs"
-HISTORY_DIR = "/tmp/cninfo_watch/history"
-MAX_RETRIES = 3
+OUT_DIR = PDF_DIR
 TIMEOUT = 12
 
-os.makedirs(OUT_DIR, exist_ok=True)
+
+def to_pdf_stock_info(stock_info: dict) -> dict:
+    return {
+        'code': stock_info['code'],
+        'name': stock_info.get('name', stock_info['code']),
+        'orgId': stock_info['org_id'],
+        'column': stock_info['column'],
+        'plate': stock_info['plate_param'],
+    }
 
 
 def build_session():
@@ -126,9 +135,8 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
 
             if len(content) < 1024:
                 continue  # 文件太小，跳过
-            if b'%PDF' not in content[:5] and b'<!doctype' not in content[:9].lower():
-                # 不是 PDF 也不是 HTML，可能成功
-                pass
+            if b'%PDF' not in content[:5]:
+                continue
 
             return content, f'strategy_{i+1}', ''
 
@@ -143,58 +151,8 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
     return b'', 'all_failed', f'HTTP 500 or timeout for all strategies'
 
 
-def get_stock_info(code: str) -> dict:
-    """获取股票元信息"""
-    # 先从 history JSON 推断
-    for subdir in ['history']:
-        idx = f'/tmp/cninfo_watch/{subdir}/{code}/index.json'
-        if os.path.exists(idx):
-            with open(idx) as f:
-                d = json.load(f)
-            return {
-                'code': d.get('stock_code', code),
-                'name': d.get('stock_name', code),
-                'orgId': '',
-                'column': 'sse',
-                'plate': 'sh',
-            }
-
-    # 从已知数据推断
-    if code.startswith('6'):
-        return {'code': code, 'name': code, 'column': 'sse', 'plate': 'sh', 'orgId': f'gssh0{code}'}
-    return {'code': code, 'name': code, 'column': 'szse', 'plate': 'sz', 'orgId': f'gssz0{code}'}
-
-
-def resolve_stock_from_search(code: str) -> Optional[dict]:
-    """从巨潮搜索 API 获取真实 orgId"""
-    URL = 'http://www.cninfo.com.cn/new/information/topSearch/detailOfQuery'
-    data = urllib.parse.urlencode({'keyWord': code, 'maxSecNum': 10, 'maxListNum': 0}).encode()
-    req = urllib.request.Request(URL, data=data, headers={
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': 'http://www.cninfo.com.cn/',
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            result = json.loads(r.read().decode())
-            items = result.get('keyBoardList', []) or []
-            for item in items:
-                if item.get('code') == code:
-                    return {
-                        'code': item['code'],
-                        'name': item.get('zwjc', item.get('name', '')),
-                        'orgId': item['orgId'],
-                        'plate': item.get('plate', 'sse'),
-                        'column': 'sse' if item.get('plate') == 'sse' else 'szse',
-                    }
-    except Exception:
-        pass
-    return None
-
-
 def _load_filings_from_history(code: str, target_type: str) -> list[dict]:
     """从 history JSON 加载公告，映射类型"""
-    HISTORY_DIR = "/tmp/cninfo_watch/history"
     TYPE_MAP = {
         'annual_reports_all_history': 'annual_report',
         'half_reports_5years': 'semi_annual_report',
@@ -220,11 +178,7 @@ def _load_filings_from_history(code: str, target_type: str) -> list[dict]:
 
 def download_for_stock(code: str, target_type: str = 'all', limit: int = 0) -> list[dict]:
     """下载某股票指定类型的 PDF"""
-    # 获取真实 orgId
-    stock_info = resolve_stock_from_search(code)
-    if not stock_info:
-        print(f'  无法获取股票信息: {code}')
-        return []
+    stock_info = to_pdf_stock_info(resolve_stock_info(code))
     print(f'  {stock_info["name"]} ({code}) - orgId={stock_info["orgId"]}')
 
     filings = _load_filings_from_history(code, target_type)
@@ -243,6 +197,7 @@ def download_for_stock(code: str, target_type: str = 'all', limit: int = 0) -> l
     for ann in filings:
         ann_id = ann.get('announcementId') or ''
         pdf_path = f'{OUT_DIR}/{code}/{ann_id}.pdf'
+        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
 
         # 已下载则跳过
         if os.path.exists(pdf_path):
@@ -294,14 +249,7 @@ def main():
             pass
 
     if stock_code == 'all':
-        all_codes = []
-        if os.path.exists('/tmp/cninfo_watch/filings'):
-            for f in os.listdir('/tmp/cninfo_watch/filings'):
-                if f.endswith('_filings.json'):
-                    code = f.split('_')[0]
-                    all_codes.append(code)
-        if not all_codes:
-            all_codes = ['600089', '600790', '600824', '600927', '601186']
+        all_codes = [stock['code'] for stock in load_stocks()]
         print(f'全量下载: {all_codes}')
         for code in all_codes:
             results = download_for_stock(code, target_type, limit)
@@ -310,7 +258,8 @@ def main():
         results = download_for_stock(stock_code, target_type, limit)
 
         if results:
-            out = f'/tmp/cninfo_watch/filings/{stock_code}_{target_type}_downloads.json'
+            out = os.path.join(FILINGS_DIR, f"{stock_code}_{target_type}_downloads.json")
+            os.makedirs(os.path.dirname(out), exist_ok=True)
             with open(out, 'w') as f:
                 json.dump({'code': stock_code, 'type': target_type, 'downloaded_at': datetime.now().isoformat(), 'results': results}, f, ensure_ascii=False, indent=2)
 

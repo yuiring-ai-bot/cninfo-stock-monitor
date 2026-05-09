@@ -28,12 +28,18 @@
 │   ├── watch_stock_em.py       # 东方财富 API 监控
 │   ├── fetch_history.py        # 历史数据抓取（6类：年报/半年报/季报/业绩预告/全公告/index）
 │   ├── onboard_stock.py        # 新股录入（4类数据）
-│   └── daily_summary.py        # 多股每日摘要（固定 STOCKS 列表）
+│   ├── daily_summary.py        # 多股每日摘要（读取 config/stocks.json）
+│   ├── cninfo_pdfs.py          # PDF 下载器（读取 history 输出）
+│   └── fetch_pdfs.py           # PDF 下载命令行包装
+├── config/
+│   └── stocks.json             # 批量监控股票配置
 └── docs/
-    └── (待创建)
+    └── ARCHITECTURE.md
 ```
 
 ## 输出数据目录
+
+运行数据目录由 `CNINFO_DATA_DIR` 控制。未设置时，Linux/macOS 默认 `/tmp/cninfo_watch`，Windows 默认系统临时目录下的 `cninfo_watch`。
 
 ```
 /tmp/cninfo_watch/
