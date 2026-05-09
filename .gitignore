@@ -1,2 +1,30 @@
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 临时数据 — 监控状态/历史缓存
+*_last_check.json
+*_last_check_em.json
+*_history/
+
+# 运行数据目录 (由 CNINFO_DATA_DIR 控制, 默认 /tmp/cninfo_watch)
+/tmp/cninfo_watch/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 环境/密钥
+.env
+*.env.local
