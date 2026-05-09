@@ -74,22 +74,32 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
         return b'', '', 'no adjunctUrl'
 
     # 构造所有可能的 URL
-    pdf_url = f'http://www.cninfo.com.cn/new/{adj_url}'
+    # 核心：cninfo PDF 文件托管在 static.cninfo.com.cn CDN，而非 www.cninfo.com.cn
+    static_url = f'http://static.cninfo.com.cn/{adj_url}'
+    www_url = f'http://www.cninfo.com.cn/new/{adj_url}'
 
     strategies = [
-        # 策略1: 直接 PDF URL + 完整 Referer
+        # 策略1（主）: static CDN 直接下载 — 最稳定、无需 cookie
         {
-            'url': pdf_url,
+            'url': static_url,
+            'method': 'GET',
+            'headers': {
+                'Referer': 'http://www.cninfo.com.cn/',
+                'Accept': 'application/pdf,*/*',
+            }
+        },
+        # 策略2: static CDN + 带 stock 页 Referer
+        {
+            'url': static_url,
             'method': 'GET',
             'headers': {
                 'Referer': f'http://www.cninfo.com.cn/new/disclosure/stock?plateId={plate}&orgId={org_id}&announcementId={ann_id}',
-                'Accept': 'application/pdf,*/*;q=0.9',
-                'Origin': 'http://www.cninfo.com.cn',
+                'Accept': 'application/pdf,*/*',
             }
         },
-        # 策略2: 带主页 session cookie
+        # 策略3: www 域名 + session cookie
         {
-            'url': pdf_url,
+            'url': www_url,
             'method': 'GET',
             'headers': {
                 'Referer': f'http://www.cninfo.com.cn/new/disclosure/stock?plateId={plate}&orgId={org_id}&announcementId={ann_id}',
@@ -97,7 +107,7 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
             },
             'refresh_session': True,
         },
-        # 策略3: POST download API
+        # 策略4: POST download API
         {
             'url': 'http://www.cninfo.com.cn/new/announcement/download',
             'method': 'POST',
@@ -108,15 +118,6 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
             'headers': {
                 'Referer': f'http://www.cninfo.com.cn/new/disclosure/stock?plateId={plate}&orgId={org_id}&announcementId={ann_id}',
                 'Accept': 'application/pdf,*/*',
-            }
-        },
-        # 策略4: 简单 GET
-        {
-            'url': pdf_url,
-            'method': 'GET',
-            'headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Accept': '*/*',
             }
         },
     ]
@@ -215,10 +216,13 @@ def download_for_stock(code: str, target_type: str = 'all', limit: int = 0) -> l
         if content and len(content) > 1024:
             with open(pdf_path, 'wb') as f:
                 f.write(content)
+            # 计算 hash
+            sha256 = hashlib.sha256(content).hexdigest()
             results.append({'announcementId': ann_id,
                             'title': ann.get('announcementTitle', ''),
                             'status': 'success', 'size': len(content),
-                            'is_pdf': is_pdf, 'strategy': strategy, 'path': pdf_path})
+                            'is_pdf': is_pdf, 'strategy': strategy, 'path': pdf_path,
+                            'file_hash': sha256})
             ok += 1
         else:
             results.append({'announcementId': ann_id,
@@ -231,7 +235,61 @@ def download_for_stock(code: str, target_type: str = 'all', limit: int = 0) -> l
         if done < len(filings):
             time.sleep(0.3)
     print()
+    # 回写 filing_index.json，更新 local_file_path / file_hash / download_status
+    _update_filing_index(code, results)
     return results
+
+
+def _update_filing_index(code: str, results: list[dict]):
+    """将下载结果回写到 filing_index.json 和 {code}_filings.json"""
+    # 构建 announcementId → result 的映射
+    result_map = {}
+    for r in results:
+        if r['status'] in ('success', 'already_exists'):
+            result_map[r['announcementId']] = r
+
+    if not result_map:
+        return
+
+    updated = 0
+    # 更新 {code}_filings.json
+    stock_filing_path = os.path.join(FILINGS_DIR, f'{code}_filings.json')
+    if os.path.exists(stock_filing_path):
+        with open(stock_filing_path) as f:
+            sf = json.load(f)
+        for filing in sf.get('filings', []):
+            fid = str(filing.get('filing_id') or filing.get('announcementId', ''))
+            if fid in result_map:
+                r = result_map[fid]
+                filing['local_file_path'] = r.get('path', '')
+                filing['file_hash'] = r.get('file_hash', '')
+                filing['download_status'] = 'downloaded'
+                filing['file_size_kb'] = r.get('size', 0) // 1024
+                updated += 1
+        with open(stock_filing_path, 'w') as f:
+            json.dump(sf, f, ensure_ascii=False, indent=2)
+
+    # 更新 filing_index.json（全局索引）
+    global_filing_path = os.path.join(FILINGS_DIR, 'filing_index.json')
+    if os.path.exists(global_filing_path):
+        with open(global_filing_path) as f:
+            gf = json.load(f)
+        for filing in gf.get('filings', []):
+            fid = str(filing.get('filing_id') or filing.get('announcementId', ''))
+            if fid in result_map:
+                r = result_map[fid]
+                filing['local_file_path'] = r.get('path', '')
+                filing['file_hash'] = r.get('file_hash', '')
+                filing['download_status'] = 'downloaded'
+                filing['file_size_kb'] = r.get('size', 0) // 1024
+                filing['pdf_url'] = f"http://static.cninfo.com.cn/{filing.get('adjunctUrl', '')}"
+                updated += 1
+        gf['generated_at'] = datetime.now().isoformat()
+        with open(global_filing_path, 'w') as f:
+            json.dump(gf, f, ensure_ascii=False, indent=2)
+
+    if updated > 0:
+        print(f'  📝 已更新 {updated} 条 filing 元数据')
 
 
 def main():
