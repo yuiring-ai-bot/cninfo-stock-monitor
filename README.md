@@ -67,6 +67,22 @@
 CNINFO_DATA_DIR=/path/to/cninfo_watch python scripts/fetch_history.py 600089 特变电工
 ```
 
+### 拉取与模型解耦
+
+高频任务只负责拉取公告元数据，不调用任何模型：
+
+```bash
+python scripts/poll_announcements.py --output /path/to/latest_announcements.json
+```
+
+仓库中的 `Poll cninfo announcements` workflow 每 5 分钟运行一次，只会：
+
+1. 从巨潮拉取公告元数据。
+2. 更新轮询状态。
+3. 上传 `latest_announcements.json` artifact。
+
+模型分析不在该定时 workflow 中执行。如需接入模型，请使用单独的手动 workflow 或离线脚本读取上述 JSON artifact。
+
 ## 监控指标
 
 ### 年报相关

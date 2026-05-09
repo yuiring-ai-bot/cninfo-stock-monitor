@@ -1,0 +1,61 @@
+name: Poll cninfo announcements
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    env:
+      CNINFO_DATA_DIR: .cninfo_runtime
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore poll state
+        uses: actions/cache@v4
+        with:
+          path: .cninfo_runtime/state
+          key: cninfo-poll-state-${{ github.run_id }}
+          restore-keys: |
+            cninfo-poll-state-
+
+      - name: Poll announcements
+        run: |
+          python scripts/poll_announcements.py \
+            --output .cninfo_runtime/poll/latest_announcements.json
+
+      - name: Summarize poll result
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(".cninfo_runtime/poll/latest_announcements.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          lines = [
+              "## cninfo poll",
+              "",
+              f"- has_new: `{data['has_new']}`",
+              f"- new_count: `{data['new_count']}`",
+              "",
+              "This scheduled workflow only fetches metadata and never calls a model.",
+          ]
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(lines), encoding="utf-8")
+          PY
+
+      - name: Upload poll artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cninfo-poll-${{ github.run_id }}
+          path: .cninfo_runtime/poll/latest_announcements.json
+          retention-days: 7

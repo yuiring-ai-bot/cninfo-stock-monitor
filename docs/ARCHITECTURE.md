@@ -29,6 +29,7 @@
 │   ├── fetch_history.py        # 历史数据抓取（6类：年报/半年报/季报/业绩预告/全公告/index）
 │   ├── onboard_stock.py        # 新股录入（4类数据）
 │   ├── daily_summary.py        # 多股每日摘要（读取 config/stocks.json）
+│   ├── poll_announcements.py   # 高频公告轮询（不调用模型）
 │   ├── cninfo_pdfs.py          # PDF 下载器（读取 history 输出）
 │   └── fetch_pdfs.py           # PDF 下载命令行包装
 ├── config/
@@ -102,6 +103,15 @@
 | 端点 | 方法 | 用途 |
 |------|------|------|
 | `http://np-anotice-stock.eastmoney.com/api/security/ann` | POST | 全公告查询 |
+
+## 调度边界
+
+高频调度只执行数据拉取：
+
+- `poll-announcements.yml`: 每 5 分钟运行，只拉取巨潮公告元数据并上传 JSON artifact。
+- `model-analysis.yml`: 仅手动触发，作为后续模型分析入口。
+
+模型调用不能放进高频轮询任务。分析任务必须显式读取某次轮询产物或其他人工指定输入。
 
 ## Neo4j 图谱规划
 

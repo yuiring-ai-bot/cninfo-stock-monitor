@@ -1,0 +1,29 @@
+name: Manual model analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      poll_artifact_run_id:
+        description: "Run ID of the poll workflow artifact to analyze"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  manual-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain decoupling
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Manual model analysis
+
+          This workflow is intentionally manual-only. The five-minute polling
+          workflow does not call any model and only uploads structured JSON.
+
+          Add model invocation steps here only after selecting a poll artifact
+          or another explicit input.
+          EOF

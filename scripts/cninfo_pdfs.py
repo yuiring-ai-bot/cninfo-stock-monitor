@@ -73,23 +73,29 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
     if not adj_url:
         return b'', '', 'no adjunctUrl'
 
-    # 构造所有可能的 URL
-    pdf_url = f'http://www.cninfo.com.cn/new/{adj_url}'
+    # cninfo PDF files are served from static.cninfo.com.cn; www often returns 500.
+    static_url = f'http://static.cninfo.com.cn/{adj_url}'
+    www_url = f'http://www.cninfo.com.cn/new/{adj_url}'
 
     strategies = [
-        # 策略1: 直接 PDF URL + 完整 Referer
         {
-            'url': pdf_url,
+            'url': static_url,
+            'method': 'GET',
+            'headers': {
+                'Referer': 'http://www.cninfo.com.cn/',
+                'Accept': 'application/pdf,*/*',
+            }
+        },
+        {
+            'url': static_url,
             'method': 'GET',
             'headers': {
                 'Referer': f'http://www.cninfo.com.cn/new/disclosure/stock?plateId={plate}&orgId={org_id}&announcementId={ann_id}',
-                'Accept': 'application/pdf,*/*;q=0.9',
-                'Origin': 'http://www.cninfo.com.cn',
+                'Accept': 'application/pdf,*/*',
             }
         },
-        # 策略2: 带主页 session cookie
         {
-            'url': pdf_url,
+            'url': www_url,
             'method': 'GET',
             'headers': {
                 'Referer': f'http://www.cninfo.com.cn/new/disclosure/stock?plateId={plate}&orgId={org_id}&announcementId={ann_id}',
@@ -97,7 +103,6 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
             },
             'refresh_session': True,
         },
-        # 策略3: POST download API
         {
             'url': 'http://www.cninfo.com.cn/new/announcement/download',
             'method': 'POST',
@@ -108,15 +113,6 @@ def download_pdf(ann: dict, stock_info: dict, opener=None) -> tuple[bytes, str, 
             'headers': {
                 'Referer': f'http://www.cninfo.com.cn/new/disclosure/stock?plateId={plate}&orgId={org_id}&announcementId={ann_id}',
                 'Accept': 'application/pdf,*/*',
-            }
-        },
-        # 策略4: 简单 GET
-        {
-            'url': pdf_url,
-            'method': 'GET',
-            'headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Accept': '*/*',
             }
         },
     ]
@@ -215,10 +211,12 @@ def download_for_stock(code: str, target_type: str = 'all', limit: int = 0) -> l
         if content and len(content) > 1024:
             with open(pdf_path, 'wb') as f:
                 f.write(content)
+            sha256 = hashlib.sha256(content).hexdigest()
             results.append({'announcementId': ann_id,
                             'title': ann.get('announcementTitle', ''),
                             'status': 'success', 'size': len(content),
-                            'is_pdf': is_pdf, 'strategy': strategy, 'path': pdf_path})
+                            'is_pdf': is_pdf, 'strategy': strategy, 'path': pdf_path,
+                            'file_hash': sha256})
             ok += 1
         else:
             results.append({'announcementId': ann_id,
@@ -231,7 +229,47 @@ def download_for_stock(code: str, target_type: str = 'all', limit: int = 0) -> l
         if done < len(filings):
             time.sleep(0.3)
     print()
+    _update_filing_index(code, results)
     return results
+
+
+def _update_filing_index(code: str, results: list[dict]):
+    result_map = {
+        r['announcementId']: r
+        for r in results
+        if r.get('status') in ('success', 'already_exists') and r.get('announcementId')
+    }
+    if not result_map:
+        return
+
+    updated = 0
+    paths = [
+        os.path.join(FILINGS_DIR, f'{code}_filings.json'),
+        os.path.join(FILINGS_DIR, 'filing_index.json'),
+    ]
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+        for filing in data.get('filings', []):
+            filing_id = str(filing.get('filing_id') or filing.get('announcementId', ''))
+            if filing_id not in result_map:
+                continue
+            result = result_map[filing_id]
+            filing['local_file_path'] = result.get('path', '')
+            filing['file_hash'] = result.get('file_hash', '')
+            filing['download_status'] = 'downloaded'
+            filing['file_size_kb'] = result.get('size', 0) // 1024
+            if filing.get('adjunctUrl'):
+                filing['pdf_url'] = f"http://static.cninfo.com.cn/{filing['adjunctUrl']}"
+            updated += 1
+        data['generated_at'] = datetime.now().isoformat()
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    if updated:
+        print(f'  Updated {updated} filing metadata rows')
 
 
 def main():
