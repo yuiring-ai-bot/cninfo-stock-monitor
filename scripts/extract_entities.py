@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """
-P4 + P5: 实体抽取 + Neo4j图谱构建
-从文本/结构化数据中提取风险、事件、指标，写入Neo4j
+Rule-based entity extraction for filings.
+
+This script is incremental by default. It hashes each text JSON file and only
+re-extracts entities for filings whose text changed or was not processed before.
+Use --force to rebuild all extracted entities.
 """
+import argparse
+import hashlib
 import json
 import os
-import sys
 import re
 from datetime import datetime
 
 from cninfo_paths import DATA_DIR
 
-CHUNK_DIR = os.path.join(DATA_DIR, "chunks")
 TEXT_DIR = os.path.join(DATA_DIR, "texts")
-STRUCTURED_DIR = os.path.join(DATA_DIR, "structured")
 ENTITIES_DIR = os.path.join(DATA_DIR, "entities")
+ENTITIES_FILE = os.path.join(ENTITIES_DIR, "extracted_entities.json")
+STATE_FILE = os.path.join(ENTITIES_DIR, "extract_state.json")
 os.makedirs(ENTITIES_DIR, exist_ok=True)
 
-# 财务指标关键词
 METRIC_KEYWORDS = {
     "营业收入": "revenue",
-    "净利润": "net_profit", 
+    "净利润": "net_profit",
     "总资产": "total_assets",
     "净资产": "net_assets",
     "每股收益": "eps",
@@ -28,10 +31,9 @@ METRIC_KEYWORDS = {
     "毛利率": "gross_margin",
     "净资产收益率": "roe",
     "经营活动现金流": "operating_cashflow",
-    "基本每股收益": "basic_eps"
+    "基本每股收益": "basic_eps",
 }
 
-# 事件类型关键词
 EVENT_KEYWORDS = {
     "重大投资": ["投资", "出资", "设立", "新建", "扩建"],
     "项目投产": ["投产", "试运行", "竣工验收", "达产"],
@@ -45,294 +47,339 @@ EVENT_KEYWORDS = {
     "股权质押": ["质押", "股权质押", "冻结"],
     "关联交易": ["关联交易", "关联方", "关联关系"],
     "重大合同": ["合同", "协议", "订单", "中标"],
-    "业绩预告": ["业绩预告", "业绩快报", "业绩变动", "业绩预增"]
+    "业绩预告": ["业绩预告", "业绩快报", "业绩变动", "业绩预增"],
 }
 
-# 风险关键词
 RISK_KEYWORDS = [
-    "风险", "不确定性", "可能影响", "不利影响", "波动风险",
-    "政策风险", "市场风险", "经营风险", "财务风险", "汇率风险",
-    "原材料价格", "竞争加剧", "行业波动"
+    "风险",
+    "不确定性",
+    "可能影响",
+    "不利影响",
+    "波动风险",
+    "政策风险",
+    "市场风险",
+    "经营风险",
+    "财务风险",
+    "汇率风险",
+    "原材料价格",
+    "竞争加剧",
+    "行业波动",
 ]
 
-def extract_entities_from_text(text: str, stock_code: str, filing_id: str, page_num: int, chunk_id: str) -> dict:
-    """从文本中提取风险、事件、指标（基于规则）"""
-    results = {"risks": [], "events": [], "metrics": []}
-    
-    lines = text.split("\n")
-    
-    # 提取指标
-    for keyword, eng_name in METRIC_KEYWORDS.items():
-        if keyword in text:
-            # 找到关键词前后的数值
-            for line in lines:
-                if keyword in line:
-                    nums = re.findall(r'[-]?\d+[,]?\d*\.?\d+[亿万千]?', line)
-                    if nums:
-                        results["metrics"].append({
-                            "name": keyword,
-                            "type": eng_name,
-                            "value": nums[0],
-                            "context": line.strip()[:100],
-                            "source_filing_id": filing_id,
-                            "source_page": page_num,
-                            "source_chunk_id": chunk_id
-                        })
-    
-    # 提取事件
+
+def load_json(path, default):
+    if not os.path.exists(path):
+        return default
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path, payload):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def empty_entities():
+    return {"risks": [], "events": [], "metrics": []}
+
+
+def extract_entities_from_text(text, stock_code, filing_id, page_num, chunk_id):
+    results = empty_entities()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for keyword, metric_type in METRIC_KEYWORDS.items():
+        if keyword not in text:
+            continue
+        for line in lines:
+            if keyword not in line:
+                continue
+            numbers = re.findall(r"[-]?\d+(?:,\d{3})*(?:\.\d+)?[%亿元万股]*", line)
+            if not numbers:
+                continue
+            results["metrics"].append({
+                "name": keyword,
+                "type": metric_type,
+                "value": numbers[0],
+                "context": line[:160],
+                "source_filing_id": filing_id,
+                "source_page": page_num,
+                "source_chunk_id": chunk_id,
+                "stock_code": stock_code,
+            })
+            break
+
     for event_type, keywords in EVENT_KEYWORDS.items():
-        for kw in keywords:
-            if kw in text:
-                for line in lines:
-                    if kw in line and len(line.strip()) > 10:
-                        results["events"].append({
-                            "name": line.strip()[:60],
-                            "type": event_type,
-                            "description": line.strip()[:200],
-                            "source_filing_id": filing_id,
-                            "source_page": page_num,
-                            "source_chunk_id": chunk_id
-                        })
-                        break
-    
-    # 提取风险
-    for kw in RISK_KEYWORDS:
-        if kw in text:
+        for keyword in keywords:
+            if keyword not in text:
+                continue
             for line in lines:
-                if kw in line and len(line.strip()) > 15:
-                    results["risks"].append({
-                        "name": line.strip()[:60],
-                        "type": "risk",
-                        "description": line.strip()[:200],
-                        "confidence": "medium",
+                if keyword in line and len(line) > 10:
+                    results["events"].append({
+                        "name": line[:80],
+                        "type": event_type,
+                        "description": line[:240],
                         "source_filing_id": filing_id,
                         "source_page": page_num,
-                        "source_chunk_id": chunk_id
+                        "source_chunk_id": chunk_id,
+                        "stock_code": stock_code,
                     })
                     break
-    
+            break
+
+    for keyword in RISK_KEYWORDS:
+        if keyword not in text:
+            continue
+        for line in lines:
+            if keyword in line and len(line) > 15:
+                results["risks"].append({
+                    "name": line[:80],
+                    "type": "risk",
+                    "description": line[:240],
+                    "confidence": "medium",
+                    "source_filing_id": filing_id,
+                    "source_page": page_num,
+                    "source_chunk_id": chunk_id,
+                    "stock_code": stock_code,
+                })
+                break
+
     return results
 
-def dedup_entities(entities: list, key: str) -> list:
-    """去重实体"""
+
+def dedup_entities(entities, key):
     seen = set()
     result = []
-    for e in entities:
-        k = e.get(key, "")[:80]
-        if k not in seen:
-            seen.add(k)
-            result.append(e)
+    for entity in entities:
+        dedup_key = (
+            entity.get("source_filing_id", ""),
+            entity.get("stock_code", ""),
+            str(entity.get(key, ""))[:120],
+        )
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        result.append(entity)
     return result
 
-def process_all_stocks():
-    """处理所有股票的文本提取实体"""
-    text_files = sorted([f for f in os.listdir(TEXT_DIR) if f.endswith(".json")])
-    print(f"📂 处理 {len(text_files)} 个文本文件...")
 
-    all_risks = []
-    all_events = []
-    all_metrics = []
-    
-    for i, fname in enumerate(text_files):
-        fpath = os.path.join(TEXT_DIR, fname)
-        try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
+def remove_filing_entities(entities, filing_id):
+    return {
+        "risks": [item for item in entities.get("risks", []) if item.get("source_filing_id") != filing_id],
+        "events": [item for item in entities.get("events", []) if item.get("source_filing_id") != filing_id],
+        "metrics": [item for item in entities.get("metrics", []) if item.get("source_filing_id") != filing_id],
+    }
+
+
+def has_filing_entities(entities, filing_id):
+    return any(
+        item.get("source_filing_id") == filing_id
+        for key in ("risks", "events", "metrics")
+        for item in entities.get(key, [])
+    )
+
+
+def merge_entities(base, extracted):
+    for key in ("risks", "events", "metrics"):
+        base.setdefault(key, []).extend(extracted.get(key, []))
+    return base
+
+
+def process_text_file(path):
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    filing_id = data.get("filing_id") or os.path.splitext(os.path.basename(path))[0]
+    stock_code = data.get("stock_code", "unknown")
+    extracted = empty_entities()
+
+    pages = data.get("pages", [])
+    if isinstance(pages, dict):
+        pages = [{"page_num": page_num, "text": text} for page_num, text in pages.items()]
+
+    for page in pages:
+        page_num = int(page.get("page_num", 1))
+        text = page.get("text", "")
+        chunk_id = f"{filing_id}_chunk_{page_num}_0"
+        page_entities = extract_entities_from_text(text, stock_code, filing_id, page_num, chunk_id)
+        merge_entities(extracted, page_entities)
+
+    return filing_id, stock_code, extracted
+
+
+def process_all_stocks(force=False):
+    if not os.path.exists(TEXT_DIR):
+        raise FileNotFoundError(f"text directory not found: {TEXT_DIR}")
+
+    state = load_json(STATE_FILE, {"files": {}})
+    existing = load_json(ENTITIES_FILE, empty_entities())
+    entities = empty_entities() if force else {
+        "risks": existing.get("risks", []),
+        "events": existing.get("events", []),
+        "metrics": existing.get("metrics", []),
+    }
+
+    text_files = sorted(fn for fn in os.listdir(TEXT_DIR) if fn.endswith(".json"))
+    stats = {"processed": 0, "skipped": 0, "errors": 0}
+    print(f"Processing {len(text_files)} text files")
+
+    for fname in text_files:
+        path = os.path.join(TEXT_DIR, fname)
+        filing_id = os.path.splitext(fname)[0]
+        digest = file_sha256(path)
+        previous = state.get("files", {}).get(filing_id, {})
+
+        if (
+            not force
+            and previous.get("sha256") == digest
+            and has_filing_entities(entities, filing_id)
+        ):
+            stats["skipped"] += 1
             continue
-        
-        filing_id = data.get("filing_id", fname.replace(".json", ""))
-        stock_code = data.get("stock_code", "unknown")
-        pages = data.get("pages", [])
-        
-        for page in pages:
-            page_num = page.get("page_num", 1)
-            text = page.get("text", "")
-            chunk_id = f"{filing_id}_chunk_{page_num}_0"
-            
-            extracted = extract_entities_from_text(text, stock_code, filing_id, page_num, chunk_id)
-            
-            for r in extracted["risks"]:
-                r["stock_code"] = stock_code
-                all_risks.append(r)
-            for e in extracted["events"]:
-                e["stock_code"] = stock_code
-                all_events.append(e)
-            for m in extracted["metrics"]:
-                m["stock_code"] = stock_code
-                all_metrics.append(m)
-        
-        if (i+1) % 50 == 0:
-            print(f"  ✅ [{i+1}/{len(text_files)}]")
-    
-    # 去重
-    all_risks = dedup_entities(all_risks, "name")
-    all_events = dedup_entities(all_events, "name")
-    all_metrics = dedup_entities(all_metrics, "name")
-    
-    print(f"\n📊 实体抽取结果:")
-    print(f"  风险:     {len(all_risks)}")
-    print(f"  事件:     {len(all_events)}")
-    print(f"  指标:     {len(all_metrics)}")
-    
-    # 保存到文件
-    entities = {
+
+        try:
+            actual_filing_id, stock_code, extracted = process_text_file(path)
+            entities = remove_filing_entities(entities, actual_filing_id)
+            merge_entities(entities, extracted)
+            state.setdefault("files", {})[actual_filing_id] = {
+                "sha256": digest,
+                "stock_code": stock_code,
+                "extracted_at": datetime.now().isoformat(),
+                "counts": {key: len(extracted[key]) for key in ("risks", "events", "metrics")},
+            }
+            stats["processed"] += 1
+        except Exception as exc:
+            stats["errors"] += 1
+            print(f"  error {fname}: {exc}")
+
+    entities["risks"] = dedup_entities(entities["risks"], "name")
+    entities["events"] = dedup_entities(entities["events"], "name")
+    entities["metrics"] = dedup_entities(entities["metrics"], "name")
+
+    payload = {
         "generated_at": datetime.now().isoformat(),
         "summary": {
-            "risks": len(all_risks),
-            "events": len(all_events),
-            "metrics": len(all_metrics)
+            "risks": len(entities["risks"]),
+            "events": len(entities["events"]),
+            "metrics": len(entities["metrics"]),
+            **stats,
         },
-        "risks": all_risks,
-        "events": all_events,
-        "metrics": all_metrics
+        **entities,
     }
-    
-    entities_path = os.path.join(ENTITIES_DIR, "extracted_entities.json")
-    with open(entities_path, "w", encoding="utf-8") as f:
-        json.dump(entities, f, ensure_ascii=False, indent=2)
-    print(f"\n✅ 实体已保存: {entities_path}")
-    
-    return entities
+    save_json(ENTITIES_FILE, payload)
+    state["updated_at"] = datetime.now().isoformat()
+    save_json(STATE_FILE, state)
 
-def write_to_neo4j(entities: dict):
-    """将实体写入Neo4j"""
+    print("Entity extraction complete")
+    print(f"  processed: {stats['processed']}")
+    print(f"  skipped: {stats['skipped']}")
+    print(f"  errors: {stats['errors']}")
+    print(f"  risks: {len(entities['risks'])}")
+    print(f"  events: {len(entities['events'])}")
+    print(f"  metrics: {len(entities['metrics'])}")
+    print(f"  output: {ENTITIES_FILE}")
+    return payload
+
+
+def write_to_neo4j(entities):
     from neo4j import GraphDatabase
-    
+
     uri = "bolt://localhost:7687"
-    try:
-        driver = GraphDatabase.driver(uri, auth=("neo4j", "neo4j"))
-    except Exception as e:
-        print(f"❌ Neo4j连接失败: {e}")
-        print("   请先启动Neo4j: python3 scripts/neo4j_graph.py start")
-        return
-    
+    driver = GraphDatabase.driver(uri, auth=("neo4j", "neo4j"))
+
     with driver.session() as session:
-        # 风险节点
-        count = 0
-        for risk in entities["risks"]:
-            try:
-                session.run("""
-                    MATCH (c:Company {code: $code})
-                    MATCH (f:Filing {filing_id: $fid})
-                    MERGE (r:Risk {name: $name})
-                    SET r.description = $desc, r.confidence = $conf
-                    MERGE (f)-[:MENTIONS]->(r)
-                    MERGE (c)-[:HAS_RISK]->(r)
-                """, code=risk["stock_code"], fid=risk["source_filing_id"],
-                     name=risk["name"][:80], desc=risk["description"][:200],
-                     conf=risk["confidence"])
-                count += 1
-            except Exception as e:
-                pass
-        print(f"  ✅ 写入 {count} 个Risk节点")
-        
-        # 事件节点
-        count = 0
-        for event in entities["events"]:
-            try:
-                session.run("""
-                    MATCH (c:Company {code: $code})
-                    MATCH (f:Filing {filing_id: $fid})
-                    MERGE (e:Event {name: $name})
-                    SET e.type = $etype, e.description = $desc
-                    MERGE (f)-[:DISCLOSES_EVENT]->(e)
-                    MERGE (e)-[:AFFECTS]->(c)
-                """, code=event["stock_code"], fid=event["source_filing_id"],
-                     name=event["name"][:80], etype=event["type"],
-                     desc=event["description"][:200])
-                count += 1
-            except Exception as e:
-                pass
-        print(f"  ✅ 写入 {count} 个Event节点")
-        
-        # 指标节点
-        count = 0
-        for metric in entities["metrics"]:
-            try:
-                session.run("""
-                    MATCH (c:Company {code: $code})
-                    MATCH (f:Filing {filing_id: $fid})
-                    MERGE (m:Metric {name: $name})
-                    SET m.value = $val, m.type = $type
-                    MERGE (f)-[:DISCLOSES]->(m)
-                """, code=metric["stock_code"], fid=metric["source_filing_id"],
-                     name=metric["name"], val=metric.get("value", ""),
-                     type=metric.get("type", ""))
-                count += 1
-            except Exception as e:
-                pass
-        print(f"  ✅ 写入 {count} 个Metric节点")
-    
+        for risk in entities.get("risks", []):
+            session.run("""
+                MATCH (c:Company {code: $code})
+                MATCH (f:Filing {filing_id: $fid})
+                MERGE (r:Risk {name: $name})
+                SET r.description = $desc, r.confidence = $conf
+                MERGE (f)-[:MENTIONS]->(r)
+                MERGE (c)-[:HAS_RISK]->(r)
+            """, code=risk["stock_code"], fid=risk["source_filing_id"],
+                name=risk["name"][:120], desc=risk["description"][:240],
+                conf=risk.get("confidence", "medium"))
+
+        for event in entities.get("events", []):
+            session.run("""
+                MATCH (c:Company {code: $code})
+                MATCH (f:Filing {filing_id: $fid})
+                MERGE (e:Event {name: $name})
+                SET e.type = $etype, e.description = $desc
+                MERGE (f)-[:DISCLOSES_EVENT]->(e)
+                MERGE (e)-[:AFFECTS]->(c)
+            """, code=event["stock_code"], fid=event["source_filing_id"],
+                name=event["name"][:120], etype=event["type"],
+                desc=event["description"][:240])
+
+        for metric in entities.get("metrics", []):
+            session.run("""
+                MATCH (c:Company {code: $code})
+                MATCH (f:Filing {filing_id: $fid})
+                MERGE (m:Metric {name: $name, source_filing_id: $fid})
+                SET m.value = $val, m.type = $type
+                MERGE (f)-[:DISCLOSES]->(m)
+                MERGE (c)-[:HAS_METRIC]->(m)
+            """, code=metric["stock_code"], fid=metric["source_filing_id"],
+                name=metric["name"], val=metric.get("value", ""),
+                type=metric.get("type", ""))
+
     driver.close()
-    print("\n📊 Neo4j 图谱更新完成！")
+    print("Neo4j entity graph updated")
+
 
 def build_chunk_support_relations():
-    """建立Chunk到Risk/Event的SUPPORTS关系"""
     from neo4j import GraphDatabase
-    
-    uri = "bolt://localhost:7687"
-    try:
-        driver = GraphDatabase.driver(uri, auth=("neo4j", "neo4j"))
-    except:
+
+    if not os.path.exists(ENTITIES_FILE):
         return
-    
+
+    entities = load_json(ENTITIES_FILE, empty_entities())
+    driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "neo4j"))
     with driver.session() as session:
-        entities_path = os.path.join(ENTITIES_DIR, "extracted_entities.json")
-        if not os.path.exists(entities_path):
-            return
-        
-        with open(entities_path) as f:
-            entities = json.load(f)
-        
-        # 为每个风险和事件创建：从文本创建chunk_id，然后建立SUPPORTS关系
-        for risk in entities["risks"]:
-            chunk_id = risk.get("source_chunk_id", "")
+        for risk in entities.get("risks", []):
+            chunk_id = risk.get("source_chunk_id")
             if chunk_id:
                 session.run("""
                     MERGE (ch:Chunk {chunk_id: $chunk_id})
                     MATCH (r:Risk {name: $name})
                     MERGE (ch)-[:SUPPORTS]->(r)
-                """, chunk_id=chunk_id, name=risk["name"][:80])
-        
-        for event in entities["events"]:
-            chunk_id = event.get("source_chunk_id", "")
+                """, chunk_id=chunk_id, name=risk["name"][:120])
+
+        for event in entities.get("events", []):
+            chunk_id = event.get("source_chunk_id")
             if chunk_id:
                 session.run("""
                     MERGE (ch:Chunk {chunk_id: $chunk_id})
                     MATCH (e:Event {name: $name})
                     MERGE (ch)-[:SUPPORTS]->(e)
-                """, chunk_id=chunk_id, name=event["name"][:80])
-    
+                """, chunk_id=chunk_id, name=event["name"][:120])
     driver.close()
-    print("✅ Chunk-SUPPORTS 关系建立完成")
+    print("Chunk SUPPORTS relations updated")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Extract entities and optionally write them to Neo4j")
+    parser.add_argument("mode", nargs="?", default="all", choices=["extract", "neo4j", "all"])
+    parser.add_argument("--force", action="store_true", help="re-extract all text files")
+    args = parser.parse_args()
+
+    if args.mode in ("extract", "all"):
+        entities = process_all_stocks(force=args.force)
+
+    if args.mode in ("neo4j", "all"):
+        if args.mode == "neo4j":
+            entities = load_json(ENTITIES_FILE, empty_entities())
+        write_to_neo4j(entities)
+        build_chunk_support_relations()
+
 
 if __name__ == "__main__":
-    mode = sys.argv[1] if len(sys.argv) > 1 else "all"
-    
-    if mode in ("extract", "all"):
-        print("=" * 50)
-        print("🔄 P4: 实体抽取")
-        print("=" * 50)
-        entities = process_all_stocks()
-    
-    if mode in ("neo4j", "all"):
-        print("\n" + "=" * 50)
-        print("🔄 P5: Neo4j图谱写入")
-        print("=" * 50)
-        entities_path = os.path.join(ENTITIES_DIR, "extracted_entities.json")
-        if os.path.exists(entities_path):
-            with open(entities_path) as f:
-                entities = json.load(f)
-            write_to_neo4j(entities)
-            build_chunk_support_relations()
-        else:
-            print("❌ 实体文件不存在，请先extract")
-    
-    if mode == "neo4j-base":
-        # 只写入公司和公告
-        print("\n" + "=" * 50)
-        print("🔄 P5: 基础图谱(Company+Filing)")
-        print("=" * 50)
-        from neo4j_graph import build_entities_and_graph
-        build_entities_and_graph()
+    main()

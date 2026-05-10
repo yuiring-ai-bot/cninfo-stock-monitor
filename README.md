@@ -46,6 +46,21 @@ pip install pymupdf chromadb neo4j akshare pandas
 export CNINFO_DATA_DIR=/path/to/data
 ```
 
+### Add a stock
+
+Use the unified onboarding entrypoint instead of editing scattered scripts:
+
+```bash
+python scripts/add_stock.py 600790 轻纺城
+```
+
+It updates `config/stocks.json`, then runs the incremental data pipeline. The
+default pipeline does not call any model. On Linux/macOS you can also use:
+
+```bash
+sh scripts/add_stock.sh 600790 轻纺城
+```
+
 ### 高频拉取与模型解耦
 
 高频调度只做公告元数据拉取，不调用任何大模型：
