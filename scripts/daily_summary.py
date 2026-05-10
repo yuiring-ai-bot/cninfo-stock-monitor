@@ -16,6 +16,7 @@ from stock_config import load_stocks
 CACHE_DIR = "/tmp/cninfo_watch"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 
+
 def fetch_cninfo(stock_code, category='', pageSize=20, pageNum=1):
     stock_info = resolve_stock_info(stock_code)
     stock_str = f"{stock_info['code']},{stock_info['org_id']}"
