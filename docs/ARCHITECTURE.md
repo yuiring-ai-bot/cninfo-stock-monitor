@@ -47,6 +47,8 @@
 
 高频路径与模型路径强制解耦：`poll_announcements.py` 只拉取公告元数据并写 JSON，不调用模型；RAG/Wiki/LLM 类任务只能读取已产出的数据，由手动 workflow 或离线脚本显式触发。无新增公告时不得调用模型。
 
+必要模型调用必须统一经过 `model_gateway.py`。该入口负责先执行确定性 gating（例如无新增公告、空 payload、无候选内容直接退出），再调用具体 provider。禁止在高频拉取、PDF 下载、索引构建等脚本中直接调用外部模型。
+
 ## 代码资产
 
 ```
@@ -60,6 +62,7 @@
 │   ├── onboard_stock.py           # 新股录入（4类数据）
 │   ├── daily_summary.py           # 多股每日摘要（读取 config/stocks.json）
 │   ├── poll_announcements.py      # 高频公告轮询（不调用模型）
+│   ├── model_gateway.py           # 统一模型调用入口（带确定性 gating）
 │   ├── cninfo_pdfs.py             # PDF 下载引擎
 │   ├── fetch_pdfs.py              # PDF 下载命令行包装
 │   │
@@ -208,9 +211,9 @@
 ## 调度边界
 
 - `poll-announcements.yml`: 每 5 分钟运行，只拉取巨潮公告元数据、更新状态并上传 JSON artifact。
-- `model-analysis.yml`: 仅手动触发，作为模型分析入口。
+- `model-analysis.yml`: 仅手动触发，并且只能调用 `model_gateway.py`。
 
-模型调用不能放进高频轮询任务。分析任务必须显式读取某次轮询产物或其他人工指定输入；当轮询结果没有新增公告时，不应产生任何模型调用。
+模型调用不能放进高频轮询任务。分析任务必须显式读取某次轮询产物或其他人工指定输入；当轮询结果没有新增公告时，`model_gateway.py` 必须在 provider 调用前退出。
 
 ## 技术栈
 

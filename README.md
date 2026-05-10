@@ -62,6 +62,8 @@ GitHub Actions 中的 `Poll cninfo announcements` workflow 每 5 分钟运行一
 
 模型分析必须走独立的手动 workflow 或离线脚本，显式读取某次拉取结果。无新增公告时不能触发模型调用，避免无意义 token 消耗。
 
+必要且有用的模型调用并不被禁止，但必须统一经过 `scripts/model_gateway.py`。该入口会先用简单代码逻辑判断输入是否值得分析，例如 `has_new=false` 或 `new_count=0` 时直接退出，不允许消耗 token。外部模型 provider 的接入也应集中写在这个文件里，不应散落在轮询、抓取、PDF 下载或索引脚本中。
+
 ---
 
 ## 项目结构
