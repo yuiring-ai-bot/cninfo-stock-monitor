@@ -231,6 +231,60 @@ RETURN e.name, e.date LIMIT 20
 
 ---
 
+## 新增股票操作手册
+
+以新增"国泰君安 (601211)"为例，按顺序执行以下 10 步：
+
+| 步骤 | 阶段 | 命令 | 增量/全量 | 耗时 |
+|------|------|------|----------|------|
+| 1 | P0 | `python3 scripts/fetch_history.py 601211 国泰君安` | 增量 | 1-3min |
+| 2 | P1 | `python3 scripts/fetch_pdfs.py` | 增量 | 5-20min |
+| 3 | 配置 | 编辑 `config/stocks.json` 添加新条目 | — | 手动 |
+| 4 | P2-2 | `python3 scripts/extract_pdfs.py` | 增量(pending) | 2-10min |
+| 5 | P2-3 | `python3 scripts/build_rag_index.py` | 增量(checkpoint) | 2-8min |
+| 6 | P3 | `python3 scripts/fetch_akshare.py` | 全量(覆盖) | 1-3min |
+| 7 | P5 | `python3 scripts/extract_entities.py` | 全量(覆盖) | 2-5min |
+| 8 | P4 | `python3 scripts/neo4j_graph.py` | **全量重建** | 5-15min |
+| 9 | P6 | `python3 scripts/generate_wiki.py` | 全量(覆盖) | 1-3min |
+| 10 | 验证 | `python3 scripts/rag_query.py '国泰君安2024年主营业务' 601211` | — | 即时 |
+
+### 关键注意事项
+
+1. **步骤 3 必须在步骤 4 之前完成** — P2-P6 所有脚本通过 `stock_config.load_stocks()` 读取 `config/stocks.json`，不更新则新股票不会被处理
+2. **ChromaDB 索引增量安全** — `build_rag_index.py` 使用 `get_or_create_collection` + checkpoint，不会丢失已有向量
+3. **Neo4j 全量重建** — `neo4j_graph.py` 会清空旧数据后重写（需先启动 Neo4j）
+4. **超时中断可恢复** — `build_rag_index.py` 支持断点续跑，再运行一次即可
+5. **RAG 验证** — 最后一步验证向量索引是否正确写入了新股票数据
+
+### 快速一键版
+
+```bash
+CODE=601211 NAME=国泰君安
+cd /tmp/cninfo-stock-monitor
+
+# P0-P1: 数据获取
+python3 scripts/fetch_history.py $CODE $NAME
+python3 scripts/fetch_pdfs.py
+
+# ⚠️ 此处需手动编辑 config/stocks.json 添加新股票
+
+# P2-P6: 数据处理管线
+python3 scripts/extract_pdfs.py
+python3 scripts/build_rag_index.py
+python3 scripts/fetch_akshare.py
+python3 scripts/extract_entities.py
+python3 scripts/neo4j_graph.py
+python3 scripts/generate_wiki.py
+
+# 验证
+python3 scripts/rag_query.py "${NAME}2024年主营业务" $CODE
+
+# 提交
+git add -A && git commit -m "增加监控股票: ${NAME} (${CODE})" && git push
+```
+
+---
+
 ## 设计原则
 
 1. **原文为主**: 所有结构化数据（指标/风险/事件）均源自巨潮网 PDF 原文，AKShare 仅做补充

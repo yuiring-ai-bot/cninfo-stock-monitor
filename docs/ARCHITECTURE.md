@@ -208,6 +208,29 @@
 |------|------|------|
 | `http://np-anotice-stock.eastmoney.com/api/security/ann` | POST | 全公告查询 |
 
+## 新增股票操作流程
+
+以新增"国泰君安 (601211)"为例：
+
+| # | 阶段 | 命令 | 模式 | 估计耗时 |
+|---|------|------|------|---------|
+| 1 | P0 | `python3 scripts/fetch_history.py 601211 国泰君安` | 增量 | 1-3min |
+| 2 | P1 | `python3 scripts/fetch_pdfs.py` | 增量 | 5-20min |
+| 3 | 配置 | 编辑 `config/stocks.json` 添加新条目 | — | 手动 |
+| 4 | P2-2 | `python3 scripts/extract_pdfs.py` | 增量(pending) | 2-10min |
+| 5 | P2-3 | `python3 scripts/build_rag_index.py` | 增量(checkpoint) | 2-8min |
+| 6 | P3 | `python3 scripts/fetch_akshare.py` | 全量(覆盖) | 1-3min |
+| 7 | P5 | `python3 scripts/extract_entities.py` | 全量(覆盖) | 2-5min |
+| 8 | P4 | `python3 scripts/neo4j_graph.py` | **全量重建** | 5-15min |
+| 9 | P6 | `python3 scripts/generate_wiki.py` | 全量(覆盖) | 1-3min |
+| 10 | 验证 | `python3 scripts/rag_query.py '国泰君安2024年主营业务' 601211` | — | 即时 |
+
+**关键约束**：
+- 步骤3（更新 `config/stocks.json`）必须在步骤4之前完成，P2-P6 所有脚本通过 `stock_config.load_stocks()` 读取配置
+- `build_rag_index.py` 增量安全：`get_or_create_collection` + checkpoint，不丢失已有向量
+- `neo4j_graph.py` 全量重建（先清空再写入），需确保 Neo4j 已启动
+- `build_rag_index.py` 超时中断可恢复，再运行一次从 checkpoint 继续
+
 ## 调度边界
 
 - `poll-announcements.yml`: 每 5 分钟运行，只拉取巨潮公告元数据、更新状态并上传 JSON artifact。
