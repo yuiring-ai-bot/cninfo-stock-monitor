@@ -102,6 +102,7 @@ def watch_stock(stock_code, stock_name):
             print(f"  [{dt}] {announcement['announcementTitle']}")
         return True, new_anns
 
+    print(f"[SILENT] {stock_name} ({stock_code}) 无新公告")
     return False, []
 
 
