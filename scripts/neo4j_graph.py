@@ -192,7 +192,8 @@ def build_graph(reset=False):
 
         result = session.run("""
             MATCH (c:Company)
-            RETURN c.code AS code, c.name AS name, size((c)-[:FILES]->()) AS filing_count
+            OPTIONAL MATCH (c)-[:FILES]->(f:Filing)
+            RETURN c.code AS code, c.name AS name, count(f) AS filing_count
             ORDER BY c.code
         """)
         print("Neo4j graph updated")

@@ -349,6 +349,7 @@ def build_chunk_support_relations():
             if chunk_id:
                 session.run("""
                     MERGE (ch:Chunk {chunk_id: $chunk_id})
+                    WITH ch
                     MATCH (r:Risk {name: $name})
                     MERGE (ch)-[:SUPPORTS]->(r)
                 """, chunk_id=chunk_id, name=risk["name"][:120])
@@ -358,6 +359,7 @@ def build_chunk_support_relations():
             if chunk_id:
                 session.run("""
                     MERGE (ch:Chunk {chunk_id: $chunk_id})
+                    WITH ch
                     MATCH (e:Event {name: $name})
                     MERGE (ch)-[:SUPPORTS]->(e)
                 """, chunk_id=chunk_id, name=event["name"][:120])
