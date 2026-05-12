@@ -1,27 +1,43 @@
 #!/usr/bin/env python3
 """
-A-share financial report monitor using the cninfo API.
-Usage: python scripts/watch_stock_cninfo.py [stock_code] [stock_name]
+Single-stock cninfo announcement monitor.
+
+Default stock is the first entry in config/stocks.json. State is stored under
+CNINFO_DATA_DIR/state.
 """
+import argparse
 import datetime
 import json
 import os
-import sys
 import urllib.parse
 import urllib.request
 
+from cninfo_paths import DATA_DIR
 from cninfo_resolver import build_org_id, get_exchange, resolve_stock_info
+from stock_config import load_stocks
 
-CACHE_DIR = "/tmp/cninfo_watch"
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
-DEFAULT_STOCK_CODE = "600089"
-DEFAULT_STOCK_NAME = "特变电工"  # Example stock; override with CLI arguments.
-STATE_FILE = lambda code: os.path.join(CACHE_DIR, f"{code}_last_check.json")
+STATE_DIR = os.path.join(DATA_DIR, "state")
+os.makedirs(STATE_DIR, exist_ok=True)
 
-os.makedirs(CACHE_DIR, exist_ok=True)
+
+def state_file(code):
+    return os.path.join(STATE_DIR, f"{code}_last_check.json")
+
+
+def resolve_cli_stock(code=None, name=None, config_path=None):
+    if code:
+        if name:
+            return code, name
+        info = resolve_stock_info(code)
+        return code, info.get("name") or code
+
+    stocks = load_stocks(config_path)
+    first = stocks[0]
+    return first["code"], first["name"]
+
 
 def fetch_cninfo(stock_code, category="", page_size=50, page_num=1):
-    """Fetch cninfo announcements for one stock."""
     stock_info = resolve_stock_info(stock_code)
     stock_str = f"{stock_info['code']},{stock_info['org_id']}"
 
@@ -46,17 +62,13 @@ def fetch_cninfo(stock_code, category="", page_size=50, page_num=1):
 
     with urllib.request.urlopen(req, timeout=10) as resp:
         result = json.loads(resp.read().decode("utf-8"))
-        anns = result.get("announcements") or []
-        total = result.get("totalAnnouncement", 0)
-        return anns, total
+        return result.get("announcements") or [], result.get("totalAnnouncement", 0)
 
 
 def watch_stock(stock_code, stock_name):
-    """Watch one stock for new annual reports and performance forecasts."""
-    state_file = STATE_FILE(stock_code)
-
-    if os.path.exists(state_file):
-        with open(state_file, "r", encoding="utf-8") as f:
+    path = state_file(stock_code)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
             state = json.load(f)
         last_time = state.get("last_announcement_time", 0)
     else:
@@ -65,51 +77,58 @@ def watch_stock(stock_code, stock_name):
     anns_annual, total_annual = fetch_cninfo(stock_code, category="category_ndbg_szsh")
     anns_forecast, total_forecast = fetch_cninfo(stock_code, category="category_yjygjxz")
 
-    all_anns = anns_annual + anns_forecast
     seen = set()
     unique = []
-    for announcement in all_anns:
-        announcement_id = announcement["announcementId"]
-        if announcement_id not in seen:
-            seen.add(announcement_id)
-            unique.append(announcement)
-    unique.sort(key=lambda x: x["announcementTime"], reverse=True)
+    for announcement in anns_annual + anns_forecast:
+        announcement_id = announcement.get("announcementId")
+        if announcement_id in seen:
+            continue
+        seen.add(announcement_id)
+        unique.append(announcement)
+    unique.sort(key=lambda x: x.get("announcementTime", 0), reverse=True)
 
-    new_anns = [a for a in unique if a["announcementTime"] > last_time]
+    new_announcements = [
+        item for item in unique
+        if item.get("announcementTime", 0) > last_time
+    ]
 
-    now_time = unique[0]["announcementTime"] if unique else last_time
-    exchange = get_exchange(stock_code)
+    newest_time = unique[0].get("announcementTime", last_time) if unique else last_time
     state = {
-        "last_announcement_time": now_time,
+        "last_announcement_time": newest_time,
         "last_check_time": int(datetime.datetime.now().timestamp() * 1000),
         "total_tracked": len(unique),
         "stock_code": stock_code,
         "stock_name": stock_name,
-        "exchange": exchange,
+        "exchange": get_exchange(stock_code),
         "org_id": build_org_id(stock_code),
         "total_annual": total_annual,
         "total_forecast": total_forecast,
     }
-    with open(state_file, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
-    if new_anns:
-        print(f"[NEW] {stock_name} ({stock_code}) found {len(new_anns)} new announcements:")
-        for announcement in new_anns[:10]:
+    if new_announcements:
+        print(f"[NEW] {stock_name} ({stock_code}) found {len(new_announcements)} new announcements:")
+        for announcement in new_announcements[:10]:
             dt = datetime.datetime.fromtimestamp(
                 announcement["announcementTime"] / 1000
             ).strftime("%Y-%m-%d")
-            print(f"  [{dt}] {announcement['announcementTitle']}")
-        return True, new_anns
+            print(f"  [{dt}] {announcement.get('announcementTitle', '')}")
+        return True, new_announcements
 
+    print(f"[SILENT] {stock_name} ({stock_code}) no new announcements")
     return False, []
 
 
 def main():
-    stock_code = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STOCK_CODE
-    stock_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_STOCK_NAME
-    watch_stock(stock_code, stock_name)
-    sys.exit(0)
+    parser = argparse.ArgumentParser(description="Watch one stock using cninfo")
+    parser.add_argument("stock_code", nargs="?", help="stock code; defaults to first configured stock")
+    parser.add_argument("stock_name", nargs="?", help="stock name; resolved when omitted")
+    parser.add_argument("--config", help="stock config path")
+    args = parser.parse_args()
+
+    code, name = resolve_cli_stock(args.stock_code, args.stock_name, args.config)
+    watch_stock(code, name)
 
 
 if __name__ == "__main__":

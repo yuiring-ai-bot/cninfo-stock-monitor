@@ -12,7 +12,8 @@
   python3 scripts/cninfo_pdfs.py all annual_report     # 全部股票年报
 """
 
-import json, os, sys, time, hashlib, http.cookiejar
+import argparse
+import json, os, time, hashlib, http.cookiejar
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -273,21 +274,19 @@ def _update_filing_index(code: str, results: list[dict]):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return
+    parser = argparse.ArgumentParser(description="Download cninfo PDFs")
+    parser.add_argument("stock_code", nargs="?", default="all", help="stock code, or all")
+    parser.add_argument("target_type", nargs="?", default="annual_report", help="filing type, or all")
+    parser.add_argument("limit", nargs="?", type=int, default=0, help="max PDFs per stock, 0 means no limit")
+    parser.add_argument("--config", help="stock config path")
+    args = parser.parse_args()
 
-    stock_code = sys.argv[1]
-    target_type = sys.argv[2] if len(sys.argv) > 2 else 'annual_report'
-    limit = 0
-    if len(sys.argv) > 3:
-        try:
-            limit = int(sys.argv[3])
-        except ValueError:
-            pass
+    stock_code = args.stock_code
+    target_type = args.target_type
+    limit = args.limit
 
     if stock_code == 'all':
-        all_codes = [stock['code'] for stock in load_stocks()]
+        all_codes = [stock['code'] for stock in load_stocks(args.config)]
         print(f'全量下载: {all_codes}')
         for code in all_codes:
             results = download_for_stock(code, target_type, limit)

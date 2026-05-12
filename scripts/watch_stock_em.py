@@ -1,133 +1,130 @@
 #!/usr/bin/env python3
 """
-A股个股公告监控 - 东方财富 API 版本
-用法: python watch_stock_em.py [stock_code] [stock_name]
+Eastmoney announcement monitor for one configured stock.
 """
-import urllib.request
-import json
+import argparse
 import datetime
+import json
 import os
-import sys
+import urllib.request
 
-CACHE_DIR = "/tmp/cninfo_watch"
+from cninfo_paths import DATA_DIR
+from cninfo_resolver import resolve_stock_info
+from stock_config import load_stocks
+
 BASE_URL = "http://np-anotice-stock.eastmoney.com/api/security/ann"
-DEFAULT_STOCK_CODE = "600089"
-DEFAULT_STOCK_NAME = "特变电工"  # 示例股票，可通过命令行参数替换
-os.makedirs(CACHE_DIR, exist_ok=True)
+STATE_DIR = os.path.join(DATA_DIR, "state")
+os.makedirs(STATE_DIR, exist_ok=True)
 
-STATE_FILE = lambda code: os.path.join(CACHE_DIR, f"{code}_last_check_em.json")
+
+def state_file(code):
+    return os.path.join(STATE_DIR, f"{code}_last_check_em.json")
+
+
+def resolve_cli_stock(code=None, name=None, config_path=None):
+    if code:
+        if name:
+            return code, name
+        info = resolve_stock_info(code)
+        return code, info.get("name") or code
+    first = load_stocks(config_path)[0]
+    return first["code"], first["name"]
+
 
 def fetch_page(stock_code, page=1, page_size=50):
-    """获取单页公告"""
-    url = f"{BASE_URL}?sr=-1&page_size={page_size}&page_index={page}&ann_type=A&stock_list={stock_code}&client_source=web"
+    url = (
+        f"{BASE_URL}?sr=-1&page_size={page_size}&page_index={page}"
+        f"&ann_type=A&stock_list={stock_code}&client_source=web"
+    )
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
-        "Referer": "https://data.eastmoney.com/"
+        "Referer": "https://data.eastmoney.com/",
     })
     with urllib.request.urlopen(req, timeout=10) as resp:
-        result = json.loads(resp.read().decode('utf-8'))
-    return result.get('data', {}).get('list', [])
+        result = json.loads(resp.read().decode("utf-8"))
+    return result.get("data", {}).get("list", [])
+
 
 def watch_stock(stock_code, stock_name, page_size=50):
-    """
-    监控指定股票的新公告
-    返回: (has_new, new_anns, all_current)
-    """
-    state_file = STATE_FILE(stock_code)
-
-    # 读取上次检查状态
-    if os.path.exists(state_file):
-        with open(state_file, 'r') as f:
+    path = state_file(stock_code)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
             state = json.load(f)
-        last_notice_date = state.get('last_notice_date', '')
-        last_title = state.get('last_title', '')
-        print(f"[{stock_name}] 上次检查: {last_notice_date} - {last_title[:40]}")
+        last_notice_date = state.get("last_notice_date", "")
     else:
-        last_notice_date = ''
-        last_title = ''
-        print(f"[{stock_name}] 首次检查")
+        last_notice_date = ""
 
-    # 获取最新一页（最新公告）
-    current_anns = fetch_page(stock_code, page=1, page_size=page_size)
-
-    if not current_anns:
-        print(f"  API 返回空")
+    current_announcements = fetch_page(stock_code, page=1, page_size=page_size)
+    if not current_announcements:
+        print(f"[WARN] {stock_name} ({stock_code}) empty Eastmoney response")
         return False, [], []
 
-    # 最新公告
-    latest = current_anns[0]
-    latest_date = latest.get('notice_date', '')[:10]
-    latest_title = latest.get('title', '')
+    latest = current_announcements[0]
+    latest_date = latest.get("notice_date", "")[:10]
+    latest_title = latest.get("title", "")
 
-    # 检查是否有新公告
-    has_new = (latest_date > last_notice_date) or (last_notice_date == '')
-
-    new_anns = []
-    if has_new:
-        # 找出所有新公告（从第一页中找时间 > last_notice_date 的）
-        for a in current_anns:
-            if a.get('notice_date', '')[:10] > last_notice_date:
-                new_anns.append(a)
+    new_announcements = []
+    if latest_date > last_notice_date or not last_notice_date:
+        for announcement in current_announcements:
+            if announcement.get("notice_date", "")[:10] > last_notice_date:
+                new_announcements.append(announcement)
             else:
-                break  # 已按时间排序，后面都更旧
+                break
 
-    # 更新状态
-    state = {
-        'last_notice_date': latest_date,
-        'last_title': latest_title,
-        'last_check_time': datetime.datetime.now().isoformat(),
-        'stock_code': stock_code,
-        'stock_name': stock_name
-    }
-    with open(state_file, 'w') as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "last_notice_date": latest_date,
+            "last_title": latest_title,
+            "last_check_time": datetime.datetime.now().isoformat(),
+            "stock_code": stock_code,
+            "stock_name": stock_name,
+        }, f, ensure_ascii=False, indent=2)
 
-    if new_anns:
-        print(f"\n{'='*60}")
-        print(f"🆕 {stock_name} ({stock_code}) 发现 {len(new_anns)} 条新公告:")
-        for a in new_anns[:10]:
-            notice_date = a.get('notice_date', '')[:10]
-            title = a.get('title', '')
-            cols = a.get('columns', [])
-            col_name = cols[0].get('column_name', '') if cols else ''
-            print(f"  [{notice_date}] [{col_name}]")
-            print(f"    {title[:60]}")
-        print(f"{'='*60}")
-        return True, new_anns, current_anns
-    else:
-        print(f"  ✅ 无新公告")
-        return False, [], current_anns
+    if new_announcements:
+        print(f"[NEW] {stock_name} ({stock_code}) found {len(new_announcements)} new announcements:")
+        for announcement in new_announcements[:10]:
+            notice_date = announcement.get("notice_date", "")[:10]
+            title = announcement.get("title", "")
+            columns = announcement.get("columns", [])
+            column_name = columns[0].get("column_name", "") if columns else ""
+            print(f"  [{notice_date}] [{column_name}] {title[:80]}")
+        return True, new_announcements, current_announcements
+
+    print(f"[SILENT] {stock_name} ({stock_code}) no new announcements")
+    return False, [], current_announcements
+
 
 def get_all_history(stock_code, max_pages=30):
-    """获取完整历史公告（分页）"""
-    all_anns = []
+    all_announcements = []
     for page in range(1, max_pages + 1):
-        anns = fetch_page(stock_code, page=page)
-        if not anns:
+        announcements = fetch_page(stock_code, page=page)
+        if not announcements:
             break
-        all_anns.extend(anns)
+        all_announcements.extend(announcements)
         if page <= 3 or page % 5 == 0:
-            dates = anns[-1].get('notice_date', '')[:10], anns[0].get('notice_date', '')[:10]
-            print(f"  page {page}: +{len(anns)}条 ({dates[0]} ~ {dates[1]})")
-    return all_anns
+            start = announcements[-1].get("notice_date", "")[:10]
+            end = announcements[0].get("notice_date", "")[:10]
+            print(f"  page {page}: +{len(announcements)} ({start} ~ {end})")
+    return all_announcements
+
 
 def main():
-    stock_code = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STOCK_CODE
-    stock_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_STOCK_NAME
+    parser = argparse.ArgumentParser(description="Watch one stock using Eastmoney")
+    parser.add_argument("stock_code", nargs="?", help="stock code; defaults to first configured stock")
+    parser.add_argument("stock_name", nargs="?", help="stock name; resolved when omitted")
+    parser.add_argument("--config", help="stock config path")
+    parser.add_argument("--onboard", action="store_true", help="fetch historical Eastmoney announcement pages")
+    args = parser.parse_args()
 
-    if len(sys.argv) > 3 and sys.argv[3] == '--onboard':
-        # 录入模式：获取完整历史
-        print(f"\n{'='*60}")
-        print(f"录入新股票: {stock_name} ({stock_code})")
-        print(f"{'='*60}\n")
-        all_anns = get_all_history(stock_code)
-        print(f"\n共获取 {len(all_anns)} 条公告")
+    code, name = resolve_cli_stock(args.stock_code, args.stock_name, args.config)
+    if args.onboard:
+        announcements = get_all_history(code)
+        print(f"fetched {len(announcements)} Eastmoney announcements for {name} ({code})")
         return
 
-    # 默认：监控模式
-    has_new, new_anns, _ = watch_stock(stock_code, stock_name)
-    sys.exit(0)
+    watch_stock(code, name)
+
 
 if __name__ == "__main__":
     main()

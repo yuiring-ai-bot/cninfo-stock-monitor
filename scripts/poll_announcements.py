@@ -120,6 +120,10 @@ def main():
         "results": results,
     }
     write_output(args.output, payload)
+    if not payload["has_new"]:
+        print(f"[SILENT] no new announcements; output={args.output}")
+        return
+
     print(json.dumps({
         "has_new": payload["has_new"],
         "new_count": payload["new_count"],

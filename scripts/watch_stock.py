@@ -1,26 +1,41 @@
 #!/usr/bin/env python3
 """
-cninfo A-share announcement monitor.
-Usage: python scripts/watch_stock.py [stock_code] [stock_name]
+Market-category cninfo monitor for one configured stock.
+
+This legacy monitor fetches market-wide category pages and filters locally.
+Prefer watch_stock_cninfo.py for stock-specific cninfo queries.
 """
+import argparse
 import datetime
 import json
 import os
-import sys
 import urllib.parse
 import urllib.request
 
-CACHE_DIR = "/tmp/cninfo_watch"
-API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
-DEFAULT_STOCK_CODE = "600089"
-DEFAULT_STOCK_NAME = "特变电工"  # Example stock; override with CLI arguments.
-STATE_FILE = lambda code: os.path.join(CACHE_DIR, f"{code}_last_check.json")
+from cninfo_paths import DATA_DIR
+from cninfo_resolver import resolve_stock_info
+from stock_config import load_stocks
 
-os.makedirs(CACHE_DIR, exist_ok=True)
+API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
+STATE_DIR = os.path.join(DATA_DIR, "state")
+os.makedirs(STATE_DIR, exist_ok=True)
+
+
+def state_file(code):
+    return os.path.join(STATE_DIR, f"{code}_last_check_market.json")
+
+
+def resolve_cli_stock(code=None, name=None, config_path=None):
+    if code:
+        if name:
+            return code, name
+        info = resolve_stock_info(code)
+        return code, info.get("name") or code
+    first = load_stocks(config_path)[0]
+    return first["code"], first["name"]
 
 
 def fetch_announcements(category, page_size=50, page_num=1):
-    """Fetch announcements for a market-wide cninfo category."""
     data = urllib.parse.urlencode({
         "category": category,
         "pageSize": page_size,
@@ -40,61 +55,68 @@ def fetch_announcements(category, page_size=50, page_num=1):
 
 
 def watch_stock(stock_code, stock_name):
-    """Watch one stock for new annual reports and performance forecasts."""
-    state_file = STATE_FILE(stock_code)
-
-    if os.path.exists(state_file):
-        with open(state_file, "r", encoding="utf-8") as f:
+    path = state_file(stock_code)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
             state = json.load(f)
         last_time = state.get("last_announcement_time", 0)
     else:
         last_time = 0
 
-    categories = ["category_ndbg_szsh", "category_yjygjxz"]
-    all_anns = []
-    for cat in categories:
-        anns = fetch_announcements(cat)
-        filtered = [a for a in anns if a.get("secCode") == stock_code]
-        all_anns.extend(filtered)
+    all_announcements = []
+    for category in ("category_ndbg_szsh", "category_yjygjxz"):
+        all_announcements.extend([
+            item for item in fetch_announcements(category)
+            if item.get("secCode") == stock_code
+        ])
 
     seen = set()
     unique = []
-    for announcement in all_anns:
-        announcement_id = announcement["announcementId"]
-        if announcement_id not in seen:
-            seen.add(announcement_id)
-            unique.append(announcement)
-    unique.sort(key=lambda x: x["announcementTime"], reverse=True)
+    for announcement in all_announcements:
+        announcement_id = announcement.get("announcementId")
+        if announcement_id in seen:
+            continue
+        seen.add(announcement_id)
+        unique.append(announcement)
+    unique.sort(key=lambda x: x.get("announcementTime", 0), reverse=True)
 
-    new_anns = [a for a in unique if a["announcementTime"] > last_time]
+    new_announcements = [
+        item for item in unique
+        if item.get("announcementTime", 0) > last_time
+    ]
 
-    now_time = unique[0]["announcementTime"] if unique else last_time
-    state = {
-        "last_announcement_time": now_time,
-        "last_check_time": int(datetime.datetime.now().timestamp() * 1000),
-        "total_tracked": len(unique),
-        "stock_code": stock_code,
-        "stock_name": stock_name,
-    }
-    with open(state_file, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    newest_time = unique[0].get("announcementTime", last_time) if unique else last_time
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "last_announcement_time": newest_time,
+            "last_check_time": int(datetime.datetime.now().timestamp() * 1000),
+            "total_tracked": len(unique),
+            "stock_code": stock_code,
+            "stock_name": stock_name,
+        }, f, ensure_ascii=False, indent=2)
 
-    if new_anns:
-        print(f"[NEW] {stock_name} ({stock_code}) found {len(new_anns)} new announcements:")
-        for announcement in new_anns:
-            ts = announcement["announcementTime"] // 1000
-            dt = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-            print(f"  [{dt}] {announcement['announcementTitle']}")
-        return True, new_anns
+    if new_announcements:
+        print(f"[NEW] {stock_name} ({stock_code}) found {len(new_announcements)} new announcements:")
+        for announcement in new_announcements:
+            dt = datetime.datetime.fromtimestamp(
+                announcement["announcementTime"] / 1000
+            ).strftime("%Y-%m-%d")
+            print(f"  [{dt}] {announcement.get('announcementTitle', '')}")
+        return True, new_announcements
 
+    print(f"[SILENT] {stock_name} ({stock_code}) no new announcements")
     return False, []
 
 
 def main():
-    stock_code = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_STOCK_CODE
-    stock_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_STOCK_NAME
-    has_new, _ = watch_stock(stock_code, stock_name)
-    sys.exit(0 if has_new else 0)
+    parser = argparse.ArgumentParser(description="Watch one stock by filtering market-wide cninfo categories")
+    parser.add_argument("stock_code", nargs="?", help="stock code; defaults to first configured stock")
+    parser.add_argument("stock_name", nargs="?", help="stock name; resolved when omitted")
+    parser.add_argument("--config", help="stock config path")
+    args = parser.parse_args()
+
+    code, name = resolve_cli_stock(args.stock_code, args.stock_name, args.config)
+    watch_stock(code, name)
 
 
 if __name__ == "__main__":

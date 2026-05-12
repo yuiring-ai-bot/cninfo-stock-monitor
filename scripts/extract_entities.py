@@ -14,6 +14,7 @@ import re
 from datetime import datetime
 
 from cninfo_paths import DATA_DIR
+from neo4j_graph import NEO4J_PASS, NEO4J_URI, NEO4J_USER
 
 TEXT_DIR = os.path.join(DATA_DIR, "texts")
 ENTITIES_DIR = os.path.join(DATA_DIR, "entities")
@@ -291,8 +292,7 @@ def process_all_stocks(force=False):
 def write_to_neo4j(entities):
     from neo4j import GraphDatabase
 
-    uri = "bolt://localhost:7687"
-    driver = GraphDatabase.driver(uri, auth=("neo4j", "neo4j"))
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 
     with driver.session() as session:
         for risk in entities.get("risks", []):
@@ -342,7 +342,7 @@ def build_chunk_support_relations():
         return
 
     entities = load_json(ENTITIES_FILE, empty_entities())
-    driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "neo4j"))
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
     with driver.session() as session:
         for risk in entities.get("risks", []):
             chunk_id = risk.get("source_chunk_id")

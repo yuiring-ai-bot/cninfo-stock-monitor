@@ -34,6 +34,7 @@ jobs:
             --output .cninfo_runtime/poll/latest_announcements.json
 
       - name: Summarize poll result
+        id: poll_result
         run: |
           python - <<'PY'
           import json
@@ -51,9 +52,12 @@ jobs:
               "This scheduled workflow only fetches metadata and never calls a model.",
           ]
           Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(lines), encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"has_new={str(data['has_new']).lower()}\n")
           PY
 
       - name: Upload poll artifact
+        if: steps.poll_result.outputs.has_new == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: cninfo-poll-${{ github.run_id }}

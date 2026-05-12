@@ -1,125 +1,128 @@
 #!/usr/bin/env python3
 """
-P2-4: RAG问答接口 — 基于ChromaDB向量索引，返回来源文件+页码
+Query local ChromaDB chunks and return source context for downstream RAG use.
+
+This script only retrieves local context. It does not call a model.
 """
-import json
+import argparse
 import os
-import sys
 
 from cninfo_paths import DATA_DIR
 from stock_config import load_stocks
 
 DB_DIR = os.path.join(DATA_DIR, "chromadb")
 
+
 def get_company_name(code):
-    """根据股票代码获取公司名"""
     return {stock["code"]: stock["name"] for stock in load_stocks()}.get(code, code)
 
-def search_chunks(query: str, stock_code: str = None, k: int = 15) -> list:
-    """检索相似chunk"""
+
+def search_chunks(query, stock_code=None, k=15):
     import chromadb
+
     client = chromadb.PersistentClient(path=DB_DIR)
     collection = client.get_collection("cninfo_chunks")
-    
-    where = None
-    if stock_code:
-        where = {"stock_code": stock_code}
-    
-    results = collection.query(
-        query_texts=[query],
-        n_results=k,
-        where=where
-    )
-    
+
+    where = {"stock_code": stock_code} if stock_code else None
+    results = collection.query(query_texts=[query], n_results=k, where=where)
+
     hits = []
-    for i in range(len(results["ids"][0])):
+    ids = results.get("ids", [[]])[0]
+    documents = results.get("documents", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0] if results.get("distances") else []
+
+    for index, chunk_id in enumerate(ids):
+        score = 1.0 - distances[index] if index < len(distances) else 1.0
         hits.append({
-            "id": results["ids"][0][i],
-            "text": results["documents"][0][i],
-            "metadata": results["metadatas"][0][i],
-            "score": 1.0 - results["distances"][0][i] if results.get("distances") else 1.0
+            "id": chunk_id,
+            "text": documents[index],
+            "metadata": metadatas[index],
+            "score": score,
         })
-    
     return hits
 
-def rag_answer(question: str, stock_code: str = None, k: int = 15) -> dict:
-    """
-    RAG问答：检索相关chunk，返回上下文供LLM回答
-    返回：{question, context, source_chunks}
-    """
+
+def rag_answer(question, stock_code=None, k=15):
     hits = search_chunks(question, stock_code, k=k)
-    
+
     context_parts = []
     sources = []
     seen_sources = set()
-    
-    for i, h in enumerate(hits):
-        meta = h["metadata"]
-        source_key = f"{meta['stock_code']}|{meta['title']}|{meta['page_num']}"
-        
+
+    for index, hit in enumerate(hits, start=1):
+        metadata = hit["metadata"]
+        source_key = f"{metadata['stock_code']}|{metadata['title']}|{metadata['page_num']}"
+        company = get_company_name(metadata["stock_code"])
+
         context_parts.append(
-            f"[来源{i+1}] 公司: {get_company_name(meta['stock_code'])} ({meta['stock_code']})\n"
-            f"公告: {meta['title']}\n"
-            f"日期: {meta['publish_date']}\n"
-            f"类型: {meta.get('type', '')}\n"
-            f"页码: {meta['page_num']}\n"
-            f"原文:\n{h['text']}\n"
+            f"[Source {index}] Company: {company} ({metadata['stock_code']})\n"
+            f"Filing: {metadata['title']}\n"
+            f"Date: {metadata['publish_date']}\n"
+            f"Type: {metadata.get('type', '')}\n"
+            f"Page: {metadata['page_num']}\n"
+            f"Text:\n{hit['text']}\n"
         )
-        
-        if source_key not in seen_sources:
-            seen_sources.add(source_key)
-            sources.append({
-                "company": get_company_name(meta['stock_code']),
-                "stock_code": meta['stock_code'],
-                "title": meta['title'],
-                "publish_date": meta['publish_date'],
-                "type": meta.get('type', ''),
-                "page_num": meta['page_num'],
-                "relevance": round(h['score'], 4)
-            })
-    
-    context = "\n---\n".join(context_parts)
-    
+
+        if source_key in seen_sources:
+            continue
+        seen_sources.add(source_key)
+        sources.append({
+            "company": company,
+            "stock_code": metadata["stock_code"],
+            "title": metadata["title"],
+            "publish_date": metadata["publish_date"],
+            "type": metadata.get("type", ""),
+            "page_num": metadata["page_num"],
+            "relevance": round(hit["score"], 4),
+        })
+
     return {
         "question": question,
         "stock_code": stock_code,
-        "context": context,
+        "context": "\n---\n".join(context_parts),
         "sources": sources,
         "total_sources": len(sources),
-        "total_chunks_retrieved": len(hits)
+        "total_chunks_retrieved": len(hits),
     }
 
-def answer_question_formatted(question: str, stock_code: str = None):
-    """格式化输出RAG结果"""
+
+def answer_question_formatted(question, stock_code=None):
     result = rag_answer(question, stock_code, k=20)
-    
-    print(f"{'='*60}")
-    print(f"🔍 问题: {result['question']}")
+
+    print("=" * 60)
+    print(f"Question: {result['question']}")
     if stock_code:
-        print(f"📌 股票: {stock_code}")
-    print(f"📎 检索到 {result['total_sources']} 个来源文件, {result['total_chunks_retrieved']} 个chunk")
-    print(f"{'='*60}")
-    
-    print(f"\n📋 上下文摘要（用于LLM回答）:")
-    print(f"{'='*60}")
-    print(result['context'][:2000] + ("..." if len(result['context']) > 2000 else ""))
-    
-    print(f"\n\n📂 来源文件列表:")
-    print(f"{'='*60}")
-    for i, s in enumerate(result['sources']):
-        print(f"\n  [{i+1}] {s['company']} ({s['stock_code']})")
-        print(f"      公告: {s['title']}")
-        print(f"      日期: {s['publish_date']} | 类型: {s['type']}")
-        print(f"      页码: {s['page_num']} | 相关度: {s['relevance']:.4f}")
-    
+        print(f"Stock: {stock_code}")
+    print(
+        f"Retrieved {result['total_sources']} source files "
+        f"and {result['total_chunks_retrieved']} chunks"
+    )
+    print("=" * 60)
+
+    print("\nContext preview:")
+    print("=" * 60)
+    context = result["context"]
+    print(context[:2000] + ("..." if len(context) > 2000 else ""))
+
+    print("\n\nSources:")
+    print("=" * 60)
+    for index, source in enumerate(result["sources"], start=1):
+        print(f"\n  [{index}] {source['company']} ({source['stock_code']})")
+        print(f"      Filing: {source['title']}")
+        print(f"      Date: {source['publish_date']} | Type: {source['type']}")
+        print(f"      Page: {source['page_num']} | Relevance: {source['relevance']:.4f}")
+
     return result
 
+
+def main():
+    parser = argparse.ArgumentParser(description="Query local ChromaDB chunks for RAG context")
+    parser.add_argument("question", help="question to search for")
+    parser.add_argument("stock_code", nargs="?", help="optional stock code filter")
+    args = parser.parse_args()
+    answer_question_formatted(args.question, args.stock_code)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("用法: python3 rag_query.py <查询问题> [股票代码]")
-        print("示例: python3 rag_query.py '主要风险有哪些' 600089")
-        sys.exit(1)
-    
-    question = sys.argv[1]
-    stock = sys.argv[2] if len(sys.argv) > 2 else None
-    answer_question_formatted(question, stock)
+    main()

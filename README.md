@@ -90,7 +90,8 @@ cninfo-stock-monitor/
 │   ├── watch_stock_em.py          # 东方财富API监控
 │   ├── watch_stock.py             # 全市场筛选监控
 │   ├── fetch_history.py           # 历史公告数据抓取
-│   ├── onboard_stock.py           # 新股录入（批量抓取历史）
+│   ├── add_stock.py               # 新股一键录入（推荐入口）
+│   ├── onboard_stock.py           # 旧命令兼容包装，委托 add_stock.py
 │   ├── daily_summary.py           # 多股每日摘要
 │   ├── poll_announcements.py      # 高频公告轮询（不调用模型）
 │   ├── cninfo_resolver.py         # 股票元数据解析（orgId查询）
@@ -119,14 +120,14 @@ cninfo-stock-monitor/
 
 ### 阶段 1: 数据获取（P0-P1）
 ```bash
-# ① 录入新股元数据
-python scripts/onboard_stock.py 600089 特变电工
+# ① 录入新股并运行增量流水线
+python scripts/add_stock.py 600089 特变电工
 
 # ② 批量下载PDF
 python scripts/fetch_pdfs.py
 
-# ③ 定时监控增量公告
-python scripts/watch_stock_cninfo.py 600089 特变电工
+# ③ 定时监控增量公告（不传股票时默认读取 config/stocks.json 第一项）
+python scripts/watch_stock_cninfo.py 600089
 
 # ④ 日终摘要
 python scripts/daily_summary.py
@@ -252,7 +253,7 @@ RETURN e.name, e.date LIMIT 20
 
 | 步骤 | 阶段 | 命令 | 增量/全量 | 耗时 |
 |------|------|------|----------|------|
-| 1 | P0 | `python3 scripts/fetch_history.py 601211 国泰君安` | 增量 | 1-3min |
+| 1 | P0 | `python3 scripts/add_stock.py 601211 国泰君安` | 增量 | 1-3min |
 | 2 | P1 | `python3 scripts/fetch_pdfs.py` | 增量 | 5-20min |
 | 3 | 配置 | 编辑 `config/stocks.json` 添加新条目 | — | 手动 |
 | 4 | P2-2 | `python3 scripts/extract_pdfs.py` | 增量(pending) | 2-10min |
@@ -278,7 +279,7 @@ CODE=601211 NAME=国泰君安
 cd /tmp/cninfo-stock-monitor
 
 # P0-P1: 数据获取
-python3 scripts/fetch_history.py $CODE $NAME
+python3 scripts/add_stock.py $CODE $NAME --steps config,history,pdfs
 python3 scripts/fetch_pdfs.py
 
 # ⚠️ 此处需手动编辑 config/stocks.json 添加新股票

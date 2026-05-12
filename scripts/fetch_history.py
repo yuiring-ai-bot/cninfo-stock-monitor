@@ -11,10 +11,11 @@ import urllib.parse
 import json
 import datetime
 import os
-import sys
+import argparse
 
 from cninfo_paths import HISTORY_DIR
 from cninfo_resolver import resolve_stock_info
+from stock_config import load_stocks
 
 API_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
 
@@ -254,8 +255,20 @@ def fetch_history(stock_code, stock_name):
     return stock_dir
 
 def main():
-    stock_code = sys.argv[1] if len(sys.argv) > 1 else "600089"
-    stock_name = sys.argv[2] if len(sys.argv) > 2 else "特变电工"
+    parser = argparse.ArgumentParser(description="Fetch cninfo history for one stock")
+    parser.add_argument("stock_code", nargs="?", help="stock code; defaults to first configured stock")
+    parser.add_argument("stock_name", nargs="?", help="stock name; resolved from config/cninfo when omitted")
+    parser.add_argument("--config", help="stock config path")
+    args = parser.parse_args()
+
+    if args.stock_code:
+        stock_code = args.stock_code
+        stock_name = args.stock_name or resolve_stock_info(stock_code).get("name") or stock_code
+    else:
+        stock = load_stocks(args.config)[0]
+        stock_code = stock["code"]
+        stock_name = stock["name"]
+
     fetch_history(stock_code, stock_name)
 
 if __name__ == "__main__":

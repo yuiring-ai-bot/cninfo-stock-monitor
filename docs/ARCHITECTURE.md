@@ -59,7 +59,8 @@
 │   ├── watch_stock.py             # 全市场类别筛选监控
 │   ├── watch_stock_em.py          # 东方财富 API 监控
 │   ├── fetch_history.py           # 历史数据抓取（6类：年报/半年报/季报/业绩预告/全公告/index）
-│   ├── onboard_stock.py           # 新股录入（4类数据）
+│   ├── add_stock.py               # 新股一键录入（推荐入口）
+│   ├── onboard_stock.py           # 旧命令兼容包装，委托 add_stock.py
 │   ├── daily_summary.py           # 多股每日摘要（读取 config/stocks.json）
 │   ├── poll_announcements.py      # 高频公告轮询（不调用模型）
 │   ├── model_gateway.py           # 统一模型调用入口（带确定性 gating）
@@ -210,18 +211,24 @@
 
 ## 新增股票操作流程
 
+推荐使用统一入口，避免手动漏掉配置、历史公告、PDF、抽取和索引步骤：
+
+```bash
+python3 scripts/add_stock.py 601211 国泰君安
+```
+
 以新增"国泰君安 (601211)"为例：
 
 | # | 阶段 | 命令 | 模式 | 估计耗时 |
 |---|------|------|------|---------|
-| 1 | P0 | `python3 scripts/fetch_history.py 601211 国泰君安` | 增量 | 1-3min |
+| 1 | P0 | `python3 scripts/add_stock.py 601211 国泰君安 --steps config,history` | 增量 | 1-3min |
 | 2 | P1 | `python3 scripts/fetch_pdfs.py` | 增量 | 5-20min |
-| 3 | 配置 | 编辑 `config/stocks.json` 添加新条目 | — | 手动 |
+| 3 | 配置 | 已由 `add_stock.py` 写入 `config/stocks.json` | - | 自动 |
 | 4 | P2-2 | `python3 scripts/extract_pdfs.py` | 增量(pending) | 2-10min |
 | 5 | P2-3 | `python3 scripts/build_rag_index.py` | 增量(checkpoint) | 2-8min |
-| 6 | P3 | `python3 scripts/fetch_akshare.py` | 全量(覆盖) | 1-3min |
-| 7 | P5 | `python3 scripts/extract_entities.py` | 全量(覆盖) | 2-5min |
-| 8 | P4 | `python3 scripts/neo4j_graph.py` | **全量重建** | 5-15min |
+| 6 | P3 | `python3 scripts/fetch_akshare.py` | 增量(补缺失股票) | 1-3min |
+| 7 | P5 | `python3 scripts/extract_entities.py` | 增量(hash 状态) | 2-5min |
+| 8 | P4 | `python3 scripts/neo4j_graph.py build` | 增量(MERGE) | 5-15min |
 | 9 | P6 | `python3 scripts/generate_wiki.py` | 全量(覆盖) | 1-3min |
 | 10 | 验证 | `python3 scripts/rag_query.py '国泰君安2024年主营业务' 601211` | — | 即时 |
 
